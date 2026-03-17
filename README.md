@@ -133,3 +133,8 @@ type Provider interface {
 ```
 
 Then wire it in `cmd/askplanner/main.go` under a new `LLM_PROVIDER` value.
+
+# Future
+1. support other LLM as backend
+2. support fetch url tool
+3. integration with lark bot
