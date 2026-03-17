@@ -1,0 +1,21 @@
+I'd like to build a new version of this project(you can ignore agent.go and main.go, and start it from zero and ignore current implementation).
+The projection aims to build an agent for tidb optimizer, the required function is:
+1. receive user input message
+    1. the final target is to receive by lark websocket.
+    2. but for now, you can just implement a simple one, for example read message by http or terminal input. so I can test it locally.
+2. support read skills and source code to answer question(function call in LLM)
+    1. the skill files are from contrib/agent-rules/skills/tidb-query-tuning/references, and you can skip other skill path for now.
+    2. the code path is contrib/tidb, and you can just focus on planner code (and there are also some skills in tidb repo).
+       (PS: using git submodule to clone tidb repo is too slow, so I just copy tidb directory here, I'll use git submodule later)
+3. support different backend LLM
+    1. Kimi
+        1. for now you can just use Kimi as backend LLM
+        2. you can find the Kimi API KEY in keys/kimi_free
+        3. check this page to understand the Kimi model and its price, you should use the lowest price model for test(https://platform.moonshot.cn/docs/pricing/chat#%E7%94%9F%E6%88%90%E6%A8%A1%E5%9E%8B-moonshot-v1)
+        4. check this page to understand how to call Kimi API: https://platform.moonshot.cn/docs/api/chat#%E5%85%AC%E5%BC%80%E7%9A%84%E6%9C%8D%E5%8A%A1%E5%9C%B0%E5%9D%80
+        5. check this page to understand how to use tool: https://platform.moonshot.cn/docs/api/tool-use
+        6. you can browse the other Kimi document webset to find what you need: https://platform.moonshot.cn/docs/overview
+        7. write an skill or memory file to record what you learned from Kimi document websit, so you can get the context fast next time.
+    2. Other models support is optional and you can implement in the future, but you need provide a easy way to switch different models
+4. use plan mode first to let know important decisions
+    1. for example what language you plan to use for this agent. I tend to prefer Golang, because I'm most familar with it. If you think others are better, you can argue for it(for example Python), and the main goal is just to get it implemented smoothly.

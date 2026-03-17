@@ -1,0 +1,3 @@
+[submodule "contrib/agent-rules"]
+	path = contrib/agent-rules
+	url = https://github.com/pingcap/agent-rules.git
