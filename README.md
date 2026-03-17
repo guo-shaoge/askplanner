@@ -40,8 +40,10 @@ These come from the [pingcap/agent-rules](https://github.com/pingcap/agent-rules
 
 ```bash
 # Clone with submodules
-git clone --recurse-submodules <repo-url>
+git clone https://github.com/guo-shaoge/askplanner.git
 cd askplanner
+# clone tidb repo and agent-rules repo, it could be time consuming, you can copy your local tidb repo to contrib/tidb if necessary.
+git submodule update --init --recursive
 
 # Set up your API key (option A: env var)
 export KIMI_API_KEY="sk-your-key-here"
