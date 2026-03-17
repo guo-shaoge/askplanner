@@ -35,6 +35,7 @@ These come from the [pingcap/agent-rules](https://github.com/pingcap/agent-rules
 - A Kimi (Moonshot AI) API key — get one at [platform.moonshot.cn](https://platform.moonshot.cn)
 - TiDB source code at `contrib/tidb/` (or symlinked)
 - Skills repository at `contrib/agent-rules/` (git submodule)
+- (Lark bot only) A Feishu/Lark app with **messaging** capability and websocket event enabled — create one at [open.feishu.cn](https://open.feishu.cn)
 
 ## Quick Start
 
@@ -67,6 +68,40 @@ Type your question, or 'quit' to exit.
 
 The most common cause is stale statistics...
 ```
+
+## Lark Bot
+
+The Lark bot mode connects the same agent to Feishu/Lark via websocket, so users can ask questions directly in a Lark chat.
+
+### Setup
+
+1. Create a Feishu app at [open.feishu.cn](https://open.feishu.cn) and enable:
+   - **Bot** capability (under Features)
+   - **Event subscription** via websocket (under Events & Callbacks → Subscription Method → use **Long Connection**)
+   - Add event `im.message.receive_v1` to receive messages
+2. Grant the app these scopes: `im:message`, `im:message:send_as_bot`
+
+### Build & Run
+
+```bash
+go build -o bin/larkbot ./cmd/larkbot
+
+FEISHU_APP_ID="cli_xxxx" \
+FEISHU_APP_SECRET="xxxx" \
+KIMI_API_KEY="sk-your-key-here" \
+./bin/larkbot
+```
+
+The bot will connect via websocket and start listening for messages. Send a message to the bot in Feishu and it will reply with the agent's answer.
+
+All agent configuration env vars (`KIMI_MODEL`, `MAX_TOOL_STEPS`, etc.) work the same as the CLI mode.
+
+### Lark Bot Environment Variables
+
+| Env Var | Required | Description |
+|---------|----------|-------------|
+| `FEISHU_APP_ID` | Yes | Feishu app ID (starts with `cli_`) |
+| `FEISHU_APP_SECRET` | Yes | Feishu app secret |
 
 ## Configuration
 
@@ -102,6 +137,7 @@ KIMI_MODEL=kimi-k2-0905-preview ./bin/askplanner
 ```
 askplanner/
 ├── cmd/askplanner/main.go              # Entry point: REPL loop
+├── cmd/larkbot/main.go                 # Entry point: Lark websocket bot
 ├── internal/askplanner/
 │   ├── agent.go                        # Agent loop: system prompt + tool dispatch
 │   ├── config.go                       # Configuration from env vars
@@ -139,5 +175,5 @@ Then wire it in `cmd/askplanner/main.go` under a new `LLM_PROVIDER` value.
 # Future
 1. support other LLM as backend
 2. support fetch url tool
-3. integration with lark bot
+3. ~~integration with lark bot~~ ✓
 4. support generate SKILL itself using user questions
