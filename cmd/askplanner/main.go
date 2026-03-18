@@ -11,27 +11,31 @@ import (
 	"time"
 
 	"lab/askplanner/internal/askplanner"
+	askconfig "lab/askplanner/internal/askplanner/config"
+	"lab/askplanner/internal/askplanner/llmprovider"
+	"lab/askplanner/internal/askplanner/tools"
+	"lab/askplanner/internal/askplanner/util"
 )
 
 func main() {
 	log.SetFlags(log.Ltime | log.Lshortfile)
 
-	cfg, err := askplanner.Load()
+	cfg, err := askconfig.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
 
 	// Build LLM provider
-	var provider askplanner.Provider
+	var provider llmprovider.Provider
 	switch cfg.LLMProvider {
 	case "kimi":
-		provider = askplanner.NewKimiProvider(cfg.KimiAPIKey, cfg.KimiModel, cfg.KimiBaseURL)
+		provider = llmprovider.NewKimiProvider(cfg.KimiAPIKey, cfg.KimiModel, cfg.KimiBaseURL)
 	default:
 		log.Fatalf("unsupported LLM provider: %s", cfg.LLMProvider)
 	}
 
 	// Build skill index
-	skillIdx, err := askplanner.BuildIndex(cfg.SkillsDir)
+	skillIdx, err := tools.BuildIndex(cfg.SkillsDir)
 	if err != nil {
 		log.Fatalf("build skill index: %v", err)
 	}
@@ -39,7 +43,7 @@ func main() {
 		len(skillIdx.CoreFiles), len(skillIdx.OncallFiles), skillIdx.CustomerIssues)
 
 	// Build sandbox with allowed paths
-	sandbox := askplanner.NewSandbox(cfg.ProjectRoot, []string{
+	sandbox := util.NewSandbox(cfg.ProjectRoot, []string{
 		"contrib/agent-rules/skills/tidb-query-tuning/references",
 		"contrib/tidb/pkg/planner",
 		"contrib/tidb/pkg/statistics",
@@ -50,12 +54,12 @@ func main() {
 	})
 
 	// Build tool registry
-	toolReg := askplanner.NewRegistry(
-		askplanner.NewReadFileTool(sandbox),
-		askplanner.NewSearchCodeTool(sandbox, "contrib/tidb/pkg/planner"),
-		askplanner.NewListDirTool(sandbox),
-		askplanner.NewListSkillsTool(cfg.SkillsDir),
-		askplanner.NewReadSkillTool(cfg.SkillsDir),
+	toolReg := tools.NewRegistry(
+		tools.NewReadFileTool(sandbox),
+		tools.NewSearchCodeTool(sandbox, "contrib/tidb/pkg/planner"),
+		tools.NewListDirTool(sandbox),
+		tools.NewListSkillsTool(cfg.SkillsDir),
+		tools.NewReadSkillTool(cfg.SkillsDir),
 	)
 
 	// Build agent

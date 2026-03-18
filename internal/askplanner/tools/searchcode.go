@@ -1,4 +1,4 @@
-package askplanner
+package tools
 
 import (
 	"context"
@@ -6,17 +6,19 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"lab/askplanner/internal/askplanner/util"
 )
 
 const maxSearchResults = 30
 
 // SearchCodeTool searches for patterns in code files using grep.
 type SearchCodeTool struct {
-	sandbox     *Sandbox
+	sandbox     *util.Sandbox
 	defaultPath string // relative to project root
 }
 
-func NewSearchCodeTool(sandbox *Sandbox, defaultPath string) *SearchCodeTool {
+func NewSearchCodeTool(sandbox *util.Sandbox, defaultPath string) *SearchCodeTool {
 	return &SearchCodeTool{sandbox: sandbox, defaultPath: defaultPath}
 }
 
@@ -28,7 +30,7 @@ func (t *SearchCodeTool) Description() string {
 
 func (t *SearchCodeTool) Parameters() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":     "object",
 		"required": []string{"pattern"},
 		"properties": map[string]any{
 			"pattern": map[string]any{

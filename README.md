@@ -134,36 +134,39 @@ KIMI_MODEL=kimi-k2-0905-preview ./bin/askplanner
 
 ## Project Structure
 
-```
+```text
 askplanner/
 ├── cmd/askplanner/main.go              # Entry point: REPL loop
 ├── cmd/larkbot/main.go                 # Entry point: Lark websocket bot
-├── internal/askplanner/
-│   ├── agent.go                        # Agent loop: system prompt + tool dispatch
-│   ├── config.go                       # Configuration from env vars
+├── internal/askplanner/agent.go        # Agent loop: system prompt + tool dispatch
+├── internal/askplanner/config/
+│   └── config.go                       # Configuration from env vars
+├── internal/askplanner/llmprovider/
 │   ├── provider.go                     # LLM provider interface + message types
-│   ├── kimi.go                         # Kimi/Moonshot implementation (with retry)
+│   └── kimi.go                         # Kimi/Moonshot implementation (with retry)
+├── internal/askplanner/tools/
 │   ├── skills.go                       # Skills directory scanner
 │   ├── registry.go                     # Tool interface + registry
-│   ├── sandbox.go                      # Path sandboxing
 │   ├── readfile.go                     # read_file tool
 │   ├── searchcode.go                   # search_code tool
 │   ├── listdir.go                      # list_dir tool
 │   └── toolskills.go                   # list_skills + read_skill tools
+├── internal/askplanner/util/
+│   └── sandbox.go                      # Path sandboxing
 ├── contrib/
 │   ├── agent-rules/                    # Skills from pingcap/agent-rules (submodule)
 │   └── tidb/                           # TiDB source code
 ├── keys/                               # API key files (gitignored)
-└── llm/kimi/                           # Kimi API documentation (reference)
+├── llm_api/kimi/                       # Kimi API documentation (reference)
 ├── Makefile
-├── prompt                              # the original prompt that I used to build this project
+├── prompt                              # the original prompt that I first used to build this project
 ├── README.md
-└── AGENTS.md                            # help AI to get onboard this project quickly.
+└── AGENTS.md                           # help AI get onboard this project quickly
 ```
 
 ## Adding a New LLM Provider
 
-Implement the `llm.Provider` interface:
+Implement the `llmprovider.Provider` interface in `internal/askplanner/llmprovider/`:
 
 ```go
 type Provider interface {

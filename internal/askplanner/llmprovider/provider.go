@@ -1,4 +1,4 @@
-package askplanner
+package llmprovider
 
 import "context"
 
@@ -26,8 +26,8 @@ type ToolCallFunction struct {
 
 // ToolDefinition describes a tool available to the model.
 type ToolDefinition struct {
-	Type     string             `json:"type"`
-	Function ToolDefFunction    `json:"function"`
+	Type     string          `json:"type"`
+	Function ToolDefFunction `json:"function"`
 }
 
 // ToolDefFunction holds the function schema for a tool definition.

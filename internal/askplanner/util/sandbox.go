@@ -1,4 +1,4 @@
-package askplanner
+package util
 
 import (
 	"fmt"

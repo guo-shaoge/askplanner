@@ -1,8 +1,10 @@
-package askplanner
+package tools
 
 import (
 	"context"
 	"fmt"
+
+	"lab/askplanner/internal/askplanner/llmprovider"
 )
 
 // Tool is the interface every tool must implement.
@@ -30,13 +32,13 @@ func NewRegistry(tools ...Tool) *Registry {
 }
 
 // Definitions returns tool definitions for the LLM API.
-func (r *Registry) Definitions() []ToolDefinition {
-	defs := make([]ToolDefinition, 0, len(r.order))
+func (r *Registry) Definitions() []llmprovider.ToolDefinition {
+	defs := make([]llmprovider.ToolDefinition, 0, len(r.order))
 	for _, name := range r.order {
 		t := r.tools[name]
-		defs = append(defs, ToolDefinition{
+		defs = append(defs, llmprovider.ToolDefinition{
 			Type: "function",
-			Function: ToolDefFunction{
+			Function: llmprovider.ToolDefFunction{
 				Name:        t.Name(),
 				Description: t.Description(),
 				Parameters:  t.Parameters(),

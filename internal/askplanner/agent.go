@@ -6,12 +6,15 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"lab/askplanner/internal/askplanner/llmprovider"
+	"lab/askplanner/internal/askplanner/tools"
 )
 
 // Agent orchestrates the LLM + tools loop to answer questions.
 type Agent struct {
-	provider       Provider
-	toolReg        *Registry
+	provider       llmprovider.Provider
+	toolReg        *tools.Registry
 	systemPrompt   string
 	temperature    float64
 	maxSteps       int
@@ -21,9 +24,9 @@ type Agent struct {
 
 // AgentConfig holds the agent configuration.
 type AgentConfig struct {
-	Provider       Provider
-	ToolRegistry   *Registry
-	SkillIndex     *Index
+	Provider       llmprovider.Provider
+	ToolRegistry   *tools.Registry
+	SkillIndex     *tools.Index
 	Temperature    float64
 	MaxToolSteps   int
 	MaxResultChars int
@@ -46,7 +49,7 @@ func New(cfg AgentConfig) *Agent {
 // Answer processes a user question through the tool loop and returns the final answer.
 // onToolCall is invoked for each tool call so the caller can display progress.
 func (a *Agent) Answer(ctx context.Context, question string, onToolCall func(toolName, args string)) (string, error) {
-	messages := []Message{
+	messages := []llmprovider.Message{
 		{Role: "system", Content: a.systemPrompt},
 		{Role: "user", Content: question},
 	}
@@ -54,7 +57,7 @@ func (a *Agent) Answer(ctx context.Context, question string, onToolCall func(too
 	toolDefs := a.toolReg.Definitions()
 
 	for step := 0; step < a.maxSteps; step++ {
-		resp, err := a.provider.Complete(ctx, CompletionRequest{
+		resp, err := a.provider.Complete(ctx, llmprovider.CompletionRequest{
 			Messages:    messages,
 			Tools:       toolDefs,
 			Temperature: a.temperature,
@@ -94,7 +97,7 @@ func (a *Agent) Answer(ctx context.Context, question string, onToolCall func(too
 				result = truncate(result, a.maxResultChars)
 			}
 
-			messages = append(messages, Message{
+			messages = append(messages, llmprovider.Message{
 				Role:       "tool",
 				ToolCallID: tc.ID,
 				Name:       tc.Function.Name,
@@ -115,7 +118,7 @@ func (a *Agent) Answer(ctx context.Context, question string, onToolCall func(too
 	return "", fmt.Errorf("exceeded max tool steps (%d)", a.maxSteps)
 }
 
-func buildSystemPrompt(idx *Index) string {
+func buildSystemPrompt(idx *tools.Index) string {
 	var sb strings.Builder
 
 	sb.WriteString(`You are a TiDB Query Tuning Agent. You help engineers diagnose and optimize slow TiDB queries.

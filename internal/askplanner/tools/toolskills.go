@@ -1,4 +1,4 @@
-package askplanner
+package tools
 
 import (
 	"context"
@@ -124,7 +124,7 @@ func (t *ReadSkillTool) Description() string {
 
 func (t *ReadSkillTool) Parameters() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":     "object",
 		"required": []string{"name"},
 		"properties": map[string]any{
 			"name": map[string]any{

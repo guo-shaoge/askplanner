@@ -18,11 +18,16 @@ go vet ./...                                   # lint
 
 ## Architecture
 
-### Single Package Design
+### Internal Package Design
 
-All shared logic lives in one package: `internal/askplanner/`. Both `cmd/askplanner/main.go` and `cmd/larkbot/main.go` consume it and only differ in transport wiring.
+Shared logic now lives under `internal/askplanner/` across a few focused packages:
+- `askplanner` — agent loop and system prompt assembly
+- `llmprovider` — provider interfaces and concrete LLM backends
+- `tools` — tool interface/registry plus all tool implementations and skill indexing
+- `config` — application configuration from env vars
+- `util` — small shared infrastructure helpers such as sandboxing
 
-There is no reason to split into multiple packages at this project's scale. If you add code, put it in `internal/askplanner/`.
+Both `cmd/askplanner/main.go` and `cmd/larkbot/main.go` consume these shared packages and only differ in transport wiring.
 
 ### cmd/larkbot Overview
 
@@ -46,16 +51,16 @@ Important behavior:
 
 | Type | File | Role |
 |------|------|------|
-| `Provider` | provider.go | Interface for any LLM backend (`Complete` + `Name`) |
-| `KimiProvider` | kimi.go | Kimi/Moonshot API client with 429 retry |
-| `Agent` / `AgentConfig` | agent.go | Orchestrates the LLM-tool loop |
-| `Config` | config.go | App configuration from env vars |
-| `Tool` | registry.go | Interface for tools (`Name`, `Description`, `Parameters`, `Execute`) |
-| `Registry` | registry.go | Holds tools, provides `Definitions()` for LLM and `Execute()` for dispatch |
-| `Sandbox` | sandbox.go | Path validation — restricts file access to allowed directory roots |
-| `Index` | skills.go | Pre-scanned skill metadata for system prompt |
+| `llmprovider.Provider` | `internal/askplanner/llmprovider/provider.go` | Interface for any LLM backend (`Complete` + `Name`) |
+| `llmprovider.KimiProvider` | `internal/askplanner/llmprovider/kimi.go` | Kimi/Moonshot API client with 429 retry |
+| `askplanner.Agent` / `askplanner.AgentConfig` | `internal/askplanner/agent.go` | Orchestrates the LLM-tool loop |
+| `config.Config` | `internal/askplanner/config/config.go` | App configuration from env vars |
+| `tools.Tool` | `internal/askplanner/tools/registry.go` | Interface for tools (`Name`, `Description`, `Parameters`, `Execute`) |
+| `tools.Registry` | `internal/askplanner/tools/registry.go` | Holds tools, provides `Definitions()` for LLM and `Execute()` for dispatch |
+| `util.Sandbox` | `internal/askplanner/util/sandbox.go` | Path validation — restricts file access to allowed directory roots |
+| `tools.Index` | `internal/askplanner/tools/skills.go` | Pre-scanned skill metadata for system prompt |
 
-Note: `Config` (app config) and `AgentConfig` (agent wiring) are separate structs — the names differ to avoid collision within the single package.
+Note: `config.Config` (app config) and `askplanner.AgentConfig` (agent wiring) are separate structs.
 
 ### Agent Loop (agent.go)
 
@@ -81,9 +86,9 @@ The 212+ skill files (~80KB+) cannot fit in the 8k context window. The system pr
 
 The LLM uses `list_skills` and `read_skill` tools to read specific files on demand.
 
-### Sandboxing (sandbox.go)
+### Sandboxing (`util/sandbox.go`)
 
-All file-reading tools go through `Sandbox.Resolve()` which validates paths against an allowlist. This prevents the LLM from reading API keys, `.git`, or anything outside designated directories.
+All file-reading tools go through `util.Sandbox.Resolve()` which validates paths against an allowlist. This prevents the LLM from reading API keys, `.git`, or anything outside designated directories.
 
 Allowed roots are configured when each entrypoint builds the agent:
 - `contrib/agent-rules/skills/tidb-query-tuning/references/`
@@ -93,33 +98,33 @@ Allowed roots are configured when each entrypoint builds the agent:
 ### Rate Limiting
 
 Kimi free-tier returns 429 frequently. Two mitigations:
-1. **Retry with backoff** in `kimi.go`: 5s, 10s, 20s on 429 responses
+1. **Retry with backoff** in `internal/askplanner/llmprovider/kimi.go`: 5s, 10s, 20s on 429 responses
 2. **Step delay** in `agent.go`: configurable pause (default 1s) between LLM requests
 
 ### Tools (5 total)
 
 | Tool | File | Purpose |
 |------|------|---------|
-| `read_file` | readfile.go | Read sandboxed files with offset/limit (default 200 lines) |
-| `search_code` | searchcode.go | Grep via `rg` (or `grep` fallback), max 30 results |
-| `list_dir` | listdir.go | List directory with `[dir]`/`[file]` markers |
-| `list_skills` | toolskills.go | List skill files by category: core, oncall, customer-issues |
-| `read_skill` | toolskills.go | Read a specific skill .md file by name |
+| `read_file` | `internal/askplanner/tools/readfile.go` | Read sandboxed files with offset/limit (default 200 lines) |
+| `search_code` | `internal/askplanner/tools/searchcode.go` | Grep via `rg` (or `grep` fallback), max 30 results |
+| `list_dir` | `internal/askplanner/tools/listdir.go` | List directory with `[dir]`/`[file]` markers |
+| `list_skills` | `internal/askplanner/tools/toolskills.go` | List skill files by category: core, oncall, customer-issues |
+| `read_skill` | `internal/askplanner/tools/toolskills.go` | Read a specific skill .md file by name |
 
 ## How to Extend
 
 ### Add a new tool
-1. Create a struct in `internal/askplanner/` implementing the `Tool` interface
-2. Register it anywhere the shared agent is constructed (`cmd/askplanner/main.go`, `cmd/larkbot/main.go`) via `askplanner.NewRegistry(...)`
+1. Create a struct in `internal/askplanner/tools/` implementing the `tools.Tool` interface
+2. Register it anywhere the shared agent is constructed (`cmd/askplanner/main.go`, `cmd/larkbot/main.go`) via `tools.NewRegistry(...)`
 
 ### Add a new LLM provider
-1. Implement `Provider` interface in a new file in `internal/askplanner/` (e.g. `openai.go`)
+1. Implement `llmprovider.Provider` in a new file in `internal/askplanner/llmprovider/` (e.g. `openai.go`)
 2. Add a case in the `switch cfg.LLMProvider` block anywhere the shared agent is constructed (`cmd/askplanner/main.go`, `cmd/larkbot/main.go`)
 
 ### Add a new skill category
-1. Update `BuildIndex()` in skills.go to scan the new directory
-2. Update `ListSkillsTool.Execute()` in toolskills.go to expose the new category
-3. Update `ReadSkillTool.Execute()` in toolskills.go to resolve the name prefix
+1. Update `BuildIndex()` in `internal/askplanner/tools/skills.go` to scan the new directory
+2. Update `ListSkillsTool.Execute()` in `internal/askplanner/tools/toolskills.go` to expose the new category
+3. Update `ReadSkillTool.Execute()` in `internal/askplanner/tools/toolskills.go` to resolve the name prefix
 
 ## Configuration
 
@@ -144,7 +149,11 @@ Feishu app prerequisites for `cmd/larkbot`:
 ```
 cmd/askplanner/main.go         Entry point: config, wiring, REPL
 cmd/larkbot/main.go            Entry point: Feishu/Lark websocket bot
-internal/askplanner/           All logic (single package)
+internal/askplanner/           Agent loop and prompt assembly
+internal/askplanner/config/    Application configuration loading
+internal/askplanner/llmprovider/ LLM provider interfaces and implementations
+internal/askplanner/tools/     Tool registry, tool implementations, and skill index
+internal/askplanner/util/      Shared helpers such as sandboxing
 contrib/agent-rules/           Skills repository (git submodule)
 contrib/tidb/                  TiDB source code
 keys/                          API key files (gitignored)
@@ -153,9 +162,9 @@ llm_api/kimi/                  Kimi API documentation (reference only)
 
 ## Conventions
 
-- `internal/askplanner` stays stdlib-only; `cmd/larkbot` is the place that pulls in the Lark SDK
+- `internal/askplanner/*` stays stdlib-only; `cmd/larkbot` is the place that pulls in the Lark SDK
 - Module path: `lab/askplanner`
-- All Kimi API wire types are private (lowercase) in kimi.go
+- All Kimi API wire types are private (lowercase) in `internal/askplanner/llmprovider/kimi.go`
 - Tool results are plain strings, truncated to `maxResultChars`
 - System prompt is built once at startup from the skill index
 - `cmd/larkbot` parses text message JSON payloads (`{"text":"..."}`) and replies with Feishu `text` messages

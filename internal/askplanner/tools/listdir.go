@@ -1,4 +1,4 @@
-package askplanner
+package tools
 
 import (
 	"context"
@@ -6,14 +6,16 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"lab/askplanner/internal/askplanner/util"
 )
 
 // ListDirTool lists directory contents within the sandbox.
 type ListDirTool struct {
-	sandbox *Sandbox
+	sandbox *util.Sandbox
 }
 
-func NewListDirTool(sandbox *Sandbox) *ListDirTool {
+func NewListDirTool(sandbox *util.Sandbox) *ListDirTool {
 	return &ListDirTool{sandbox: sandbox}
 }
 
@@ -25,7 +27,7 @@ func (t *ListDirTool) Description() string {
 
 func (t *ListDirTool) Parameters() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":     "object",
 		"required": []string{"path"},
 		"properties": map[string]any{
 			"path": map[string]any{

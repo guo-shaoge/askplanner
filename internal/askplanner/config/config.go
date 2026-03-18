@@ -1,4 +1,4 @@
-package askplanner
+package config
 
 import (
 	"fmt"

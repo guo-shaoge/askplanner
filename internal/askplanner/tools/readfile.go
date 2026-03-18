@@ -1,4 +1,4 @@
-package askplanner
+package tools
 
 import (
 	"context"
@@ -6,16 +6,18 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"lab/askplanner/internal/askplanner/util"
 )
 
 const defaultLineLimit = 200
 
 // ReadFileTool reads a file within the sandbox.
 type ReadFileTool struct {
-	sandbox *Sandbox
+	sandbox *util.Sandbox
 }
 
-func NewReadFileTool(sandbox *Sandbox) *ReadFileTool {
+func NewReadFileTool(sandbox *util.Sandbox) *ReadFileTool {
 	return &ReadFileTool{sandbox: sandbox}
 }
 
@@ -27,7 +29,7 @@ func (t *ReadFileTool) Description() string {
 
 func (t *ReadFileTool) Parameters() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":     "object",
 		"required": []string{"path"},
 		"properties": map[string]any{
 			"path": map[string]any{

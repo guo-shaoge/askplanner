@@ -16,6 +16,10 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	"lab/askplanner/internal/askplanner"
+	askconfig "lab/askplanner/internal/askplanner/config"
+	"lab/askplanner/internal/askplanner/llmprovider"
+	"lab/askplanner/internal/askplanner/tools"
+	"lab/askplanner/internal/askplanner/util"
 )
 
 func main() {
@@ -81,27 +85,27 @@ func main() {
 
 // todo code duplicated with cmd/askplanner/main.go
 func buildAgent() (*askplanner.Agent, error) {
-	cfg, err := askplanner.Load()
+	cfg, err := askconfig.Load()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	var provider askplanner.Provider
+	var provider llmprovider.Provider
 	switch cfg.LLMProvider {
 	case "kimi":
-		provider = askplanner.NewKimiProvider(cfg.KimiAPIKey, cfg.KimiModel, cfg.KimiBaseURL)
+		provider = llmprovider.NewKimiProvider(cfg.KimiAPIKey, cfg.KimiModel, cfg.KimiBaseURL)
 	default:
 		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.LLMProvider)
 	}
 
-	skillIdx, err := askplanner.BuildIndex(cfg.SkillsDir)
+	skillIdx, err := tools.BuildIndex(cfg.SkillsDir)
 	if err != nil {
 		return nil, fmt.Errorf("build skill index: %w", err)
 	}
 	log.Printf("[larkbot] skills loaded: %d core, %d oncall, %d customer issues",
 		len(skillIdx.CoreFiles), len(skillIdx.OncallFiles), skillIdx.CustomerIssues)
 
-	sandbox := askplanner.NewSandbox(cfg.ProjectRoot, []string{
+	sandbox := util.NewSandbox(cfg.ProjectRoot, []string{
 		"contrib/agent-rules/skills/tidb-query-tuning/references",
 		"contrib/tidb/pkg/planner",
 		"contrib/tidb/pkg/statistics",
@@ -111,12 +115,12 @@ func buildAgent() (*askplanner.Agent, error) {
 		"contrib/tidb/AGENTS.md",
 	})
 
-	toolReg := askplanner.NewRegistry(
-		askplanner.NewReadFileTool(sandbox),
-		askplanner.NewSearchCodeTool(sandbox, "contrib/tidb/pkg/planner"),
-		askplanner.NewListDirTool(sandbox),
-		askplanner.NewListSkillsTool(cfg.SkillsDir),
-		askplanner.NewReadSkillTool(cfg.SkillsDir),
+	toolReg := tools.NewRegistry(
+		tools.NewReadFileTool(sandbox),
+		tools.NewSearchCodeTool(sandbox, "contrib/tidb/pkg/planner"),
+		tools.NewListDirTool(sandbox),
+		tools.NewListSkillsTool(cfg.SkillsDir),
+		tools.NewReadSkillTool(cfg.SkillsDir),
 	)
 
 	return askplanner.New(askplanner.AgentConfig{

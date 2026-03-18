@@ -1,4 +1,4 @@
-package askplanner
+package llmprovider
 
 import (
 	"bytes"
@@ -216,11 +216,11 @@ type kimiRequest struct {
 }
 
 type kimiMessage struct {
-	Role       string           `json:"role"`
-	Content    string           `json:"content,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
-	Name       string           `json:"name,omitempty"`
-	ToolCalls  []kimiToolCall   `json:"tool_calls,omitempty"`
+	Role       string         `json:"role"`
+	Content    string         `json:"content,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	ToolCalls  []kimiToolCall `json:"tool_calls,omitempty"`
 }
 
 type kimiToolCall struct {
