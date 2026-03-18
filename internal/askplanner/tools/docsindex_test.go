@@ -105,7 +105,7 @@ func TestBuildHeadingIndex(t *testing.T) {
 	mustWriteFile(t, filepath.Join(docsDir, "spm.md"), content)
 
 	docs := []DocEntry{{Title: "SQL Plan Management", Path: "spm.md"}}
-	idx := BuildHeadingIndex(docs, docsDir)
+	idx := BuildHeadingIndex(docs, docsDir, nil)
 
 	if idx == nil {
 		t.Fatalf("expected non-nil index")
@@ -138,7 +138,7 @@ func TestHeadingIndexSearch(t *testing.T) {
 	mustWriteFile(t, filepath.Join(docsDir, "spm.md"), content)
 
 	docs := []DocEntry{{Title: "SQL Plan Management", Path: "spm.md"}}
-	idx := BuildHeadingIndex(docs, docsDir)
+	idx := BuildHeadingIndex(docs, docsDir, nil)
 
 	// Search for "binding" should find multiple matches
 	results := idx.Search("binding", 10)
@@ -177,7 +177,7 @@ func TestHeadingIndexSearchCaseInsensitive(t *testing.T) {
 	mustWriteFile(t, filepath.Join(docsDir, "doc.md"), content)
 
 	docs := []DocEntry{{Title: "Optimizer Overview", Path: "doc.md"}}
-	idx := BuildHeadingIndex(docs, docsDir)
+	idx := BuildHeadingIndex(docs, docsDir, nil)
 
 	results := idx.Search("hash join", 10)
 	if len(results) == 0 {
@@ -196,12 +196,129 @@ func TestHeadingIndexSearchStopWords(t *testing.T) {
 	mustWriteFile(t, filepath.Join(docsDir, "doc.md"), content)
 
 	docs := []DocEntry{{Title: "Stats", Path: "doc.md"}}
-	idx := BuildHeadingIndex(docs, docsDir)
+	idx := BuildHeadingIndex(docs, docsDir, nil)
 
 	// "how to do statistics" should filter stop words and match on "statistics"
 	results := idx.Search("how to do statistics", 10)
 	if len(results) == 0 {
 		t.Fatalf("expected match after filtering stop words")
+	}
+}
+
+func TestBuildHeadingIndexWithExtraDirs(t *testing.T) {
+	docsDir := t.TempDir()
+
+	// Create a manifest doc
+	mustWriteFile(t, filepath.Join(docsDir, "overview.md"), "# Overview\n\n## Getting Started\n")
+
+	// Create an extra dir with sql-statement docs
+	mustWriteFile(t, filepath.Join(docsDir, "sql-statements", "sql-statement-admin.md"),
+		"---\ntitle: ADMIN | TiDB SQL Statement Reference\nsummary: An overview of ADMIN.\n---\n\n# ADMIN\n\n## `ADMIN BINDINGS` related statement\n\n## `ADMIN CHECK` related statement\n")
+
+	mustWriteFile(t, filepath.Join(docsDir, "sql-statements", "sql-statement-create-binding.md"),
+		"---\ntitle: CREATE BINDING | TiDB SQL Statement Reference\nsummary: Create SQL bindings.\n---\n\n# CREATE BINDING\n\n## Synopsis\n\n## Examples\n")
+
+	docs := []DocEntry{{Title: "Overview", Path: "overview.md"}}
+	idx := BuildHeadingIndex(docs, docsDir, []string{"sql-statements"})
+
+	// Should have entries from both manifest and extra dir
+	hasManifest := false
+	hasExtraDir := false
+	for _, e := range idx.Entries {
+		if e.DocPath == "overview.md" {
+			hasManifest = true
+		}
+		if strings.HasPrefix(e.DocPath, "sql-statements/") {
+			hasExtraDir = true
+		}
+	}
+	if !hasManifest {
+		t.Fatalf("expected manifest entries in index")
+	}
+	if !hasExtraDir {
+		t.Fatalf("expected extra dir entries in index")
+	}
+
+	// Extra dir should NOT have outlines
+	outline := idx.Outline("sql-statements/sql-statement-admin.md")
+	if len(outline) != 0 {
+		t.Fatalf("expected no outline for extra dir doc, got %v", outline)
+	}
+
+	// Manifest doc SHOULD have outlines
+	outline = idx.Outline("overview.md")
+	if len(outline) != 1 || outline[0] != "Getting Started" {
+		t.Fatalf("expected outline for manifest doc, got %v", outline)
+	}
+}
+
+func TestHeadingIndexSearchFindsExtraDirEntries(t *testing.T) {
+	docsDir := t.TempDir()
+
+	mustWriteFile(t, filepath.Join(docsDir, "spm.md"),
+		"# SQL Plan Management\n\n## SQL binding\n\n### Create a binding\n")
+
+	mustWriteFile(t, filepath.Join(docsDir, "sql-statements", "sql-statement-admin.md"),
+		"---\ntitle: ADMIN | TiDB SQL Statement Reference\nsummary: An overview of ADMIN.\n---\n\n# ADMIN\n\n## `ADMIN BINDINGS` related statement\n")
+
+	docs := []DocEntry{{Title: "SQL Plan Management", Path: "spm.md"}}
+	idx := BuildHeadingIndex(docs, docsDir, []string{"sql-statements"})
+
+	// Search for "binding" should find results from BOTH sources
+	results := idx.Search("binding", 20)
+	hasSPM := false
+	hasAdmin := false
+	for _, r := range results {
+		if r.DocPath == "spm.md" {
+			hasSPM = true
+		}
+		if r.DocPath == "sql-statements/sql-statement-admin.md" {
+			hasAdmin = true
+		}
+	}
+	if !hasSPM {
+		t.Fatalf("expected spm.md in search results for 'binding'")
+	}
+	if !hasAdmin {
+		t.Fatalf("expected sql-statement-admin.md in search results for 'binding'")
+	}
+}
+
+func TestParseFrontmatterTitle(t *testing.T) {
+	docsDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(docsDir, "sql-statements", "sql-statement-admin.md"),
+		"---\ntitle: ADMIN | TiDB SQL Statement Reference\nsummary: overview\n---\n\n# ADMIN\n")
+
+	docs := []DocEntry{}
+	idx := BuildHeadingIndex(docs, docsDir, []string{"sql-statements"})
+
+	// Title should be stripped of " | TiDB SQL Statement Reference" suffix
+	for _, e := range idx.Entries {
+		if e.Level == 0 && e.DocPath == "sql-statements/sql-statement-admin.md" {
+			if e.DocTitle != "ADMIN" {
+				t.Fatalf("expected title 'ADMIN', got %q", e.DocTitle)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected synthetic title entry for sql-statement-admin.md")
+}
+
+func TestSystemPromptSectionMentionsSQLStatements(t *testing.T) {
+	root := t.TempDir()
+	docsDir := filepath.Join(root, "docs")
+	overlayDir := filepath.Join(root, "overlay")
+
+	mustMkdirAll(t, docsDir)
+	mustMkdirAll(t, overlayDir)
+	mustWriteFile(t, filepath.Join(overlayDir, "SKILL.md"), "# docs overlay")
+	mustWriteFile(t, filepath.Join(overlayDir, "manifest.json"), `[{"title":"Overview","path":"overview.md"}]`)
+	mustWriteFile(t, filepath.Join(docsDir, "overview.md"), "# Overview\n")
+
+	overlay := LoadDocsOverlay(overlayDir, docsDir)
+	section := overlay.SystemPromptSection()
+	if !strings.Contains(section, "sql-statements") {
+		t.Fatalf("prompt section should mention sql-statements: %q", section)
 	}
 }
 

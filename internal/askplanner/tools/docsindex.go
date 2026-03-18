@@ -51,98 +51,163 @@ var stopWords = map[string]bool{
 	"or": true, "be": true, "i": true, "my": true, "me": true,
 }
 
-// BuildHeadingIndex parses all manifest docs and builds a searchable heading index.
-func BuildHeadingIndex(docs []DocEntry, docsDir string) *HeadingIndex {
+// BuildHeadingIndex parses manifest docs and optional extra directories,
+// building a searchable heading index. Extra dirs (e.g., "sql-statements")
+// are relative to docsDir and are indexed for search but not for prompt outlines.
+func BuildHeadingIndex(docs []DocEntry, docsDir string, extraDirs []string) *HeadingIndex {
 	idx := &HeadingIndex{
 		outlines: make(map[string][]string),
 	}
 
+	// Index manifest docs (with outline tracking for system prompt).
 	for _, doc := range docs {
-		absPath := filepath.Join(docsDir, doc.Path)
-		f, err := os.Open(absPath)
+		idx.indexFile(docsDir, doc.Path, doc.Title, true)
+	}
+
+	// Index extra directories (search only, no outlines).
+	for _, dir := range extraDirs {
+		pattern := filepath.Join(docsDir, dir, "*.md")
+		files, err := filepath.Glob(pattern)
 		if err != nil {
 			continue
 		}
-
-		var summary string
-		var outlineHeadings []string
-		scanner := bufio.NewScanner(f)
-		lineNum := 0
-		inFrontmatter := false
-		frontmatterDone := false
-
-		for scanner.Scan() {
-			lineNum++
-			line := scanner.Text()
-
-			// Parse YAML frontmatter
-			if lineNum == 1 && strings.TrimSpace(line) == "---" {
-				inFrontmatter = true
-				continue
-			}
-			if inFrontmatter {
-				if strings.TrimSpace(line) == "---" {
-					inFrontmatter = false
-					frontmatterDone = true
-					continue
-				}
-				if val, ok := strings.CutPrefix(line, "summary:"); ok {
-					summary = strings.TrimSpace(val)
-					summary = strings.Trim(summary, "'\"")
-				}
-				continue
-			}
-
-			// Parse markdown headings
-			if !strings.HasPrefix(line, "#") {
-				continue
-			}
-			level := 0
-			for _, ch := range line {
-				if ch == '#' {
-					level++
-				} else {
-					break
-				}
-			}
-			if level < 1 || level > 4 {
-				continue
-			}
-			text := strings.TrimSpace(line[level:])
-			if text == "" {
-				continue
-			}
-
-			idx.Entries = append(idx.Entries, DocHeading{
-				DocPath:  doc.Path,
-				DocTitle: doc.Title,
-				Summary:  summary,
-				Heading:  text,
-				Level:    level,
-				Line:     lineNum,
-			})
-
-			if level == 2 {
-				outlineHeadings = append(outlineHeadings, text)
-			}
+		for _, absPath := range files {
+			relPath := filepath.Join(dir, filepath.Base(absPath))
+			title := parseFrontmatterTitle(absPath)
+			idx.indexFile(docsDir, relPath, title, false)
 		}
-		f.Close()
-		_ = frontmatterDone
-
-		// Add a synthetic entry for the doc title + summary (for keyword matching)
-		idx.Entries = append(idx.Entries, DocHeading{
-			DocPath:  doc.Path,
-			DocTitle: doc.Title,
-			Summary:  summary,
-			Heading:  doc.Title,
-			Level:    0,
-			Line:     1,
-		})
-
-		idx.outlines[doc.Path] = outlineHeadings
 	}
 
 	return idx
+}
+
+// indexFile parses a single doc file and adds its headings to the index.
+// If trackOutline is true, ##-level headings are stored for system prompt rendering.
+func (idx *HeadingIndex) indexFile(docsDir, relPath, docTitle string, trackOutline bool) {
+	absPath := filepath.Join(docsDir, relPath)
+	f, err := os.Open(absPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	var summary string
+	var outlineHeadings []string
+	scanner := bufio.NewScanner(f)
+	lineNum := 0
+	inFrontmatter := false
+
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+
+		// Parse YAML frontmatter
+		if lineNum == 1 && strings.TrimSpace(line) == "---" {
+			inFrontmatter = true
+			continue
+		}
+		if inFrontmatter {
+			if strings.TrimSpace(line) == "---" {
+				inFrontmatter = false
+				continue
+			}
+			if val, ok := strings.CutPrefix(line, "summary:"); ok {
+				summary = strings.TrimSpace(val)
+				summary = strings.Trim(summary, "'\"")
+			}
+			continue
+		}
+
+		// Parse markdown headings
+		if !strings.HasPrefix(line, "#") {
+			continue
+		}
+		level := 0
+		for _, ch := range line {
+			if ch == '#' {
+				level++
+			} else {
+				break
+			}
+		}
+		if level < 1 || level > 4 {
+			continue
+		}
+		text := strings.TrimSpace(line[level:])
+		if text == "" {
+			continue
+		}
+
+		idx.Entries = append(idx.Entries, DocHeading{
+			DocPath:  relPath,
+			DocTitle: docTitle,
+			Summary:  summary,
+			Heading:  text,
+			Level:    level,
+			Line:     lineNum,
+		})
+
+		if trackOutline && level == 2 {
+			outlineHeadings = append(outlineHeadings, text)
+		}
+	}
+
+	// Add a synthetic entry for the doc title + summary (for keyword matching)
+	idx.Entries = append(idx.Entries, DocHeading{
+		DocPath:  relPath,
+		DocTitle: docTitle,
+		Summary:  summary,
+		Heading:  docTitle,
+		Level:    0,
+		Line:     1,
+	})
+
+	if trackOutline {
+		idx.outlines[relPath] = outlineHeadings
+	}
+}
+
+// parseFrontmatterTitle extracts the title from a doc's YAML frontmatter.
+// Returns the filename (without extension) if parsing fails.
+func parseFrontmatterTitle(absPath string) string {
+	fallback := strings.TrimSuffix(filepath.Base(absPath), ".md")
+
+	f, err := os.Open(absPath)
+	if err != nil {
+		return fallback
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	lineNum := 0
+	inFrontmatter := false
+
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+
+		if lineNum == 1 && strings.TrimSpace(line) == "---" {
+			inFrontmatter = true
+			continue
+		}
+		if !inFrontmatter {
+			break
+		}
+		if strings.TrimSpace(line) == "---" {
+			break
+		}
+		if val, ok := strings.CutPrefix(line, "title:"); ok {
+			title := strings.TrimSpace(val)
+			title = strings.Trim(title, "'\"")
+			// Strip common suffix from sql-statement docs
+			title, _ = strings.CutSuffix(title, " | TiDB SQL Statement Reference")
+			if title != "" {
+				return title
+			}
+		}
+	}
+
+	return fallback
 }
 
 // Search finds headings matching the given query keywords.
@@ -325,7 +390,7 @@ func LoadDocsOverlay(overlayDir, docsDir string) *DocsOverlay {
 
 	overlay.SkillMD = string(skillData)
 	overlay.Docs = docs
-	overlay.HeadingIndex = BuildHeadingIndex(docs, absDocsDir)
+	overlay.HeadingIndex = BuildHeadingIndex(docs, absDocsDir, []string{"sql-statements"})
 	overlay.Available = true
 	return overlay
 }
@@ -349,6 +414,7 @@ func (o *DocsOverlay) SystemPromptSection() string {
 			fmt.Fprintf(&sb, "- %s (%s)\n", doc.Title, doc.Path)
 		}
 	}
+	sb.WriteString("\nSQL statement reference docs (`sql-statements/`) are also searchable via `search_docs`.\n")
 	return sb.String()
 }
 
