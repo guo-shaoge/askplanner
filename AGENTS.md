@@ -11,9 +11,9 @@ There are two entrypoints:
 ## Build & Verify
 
 ```bash
-go build -o bin/askplanner ./cmd/askplanner   # build the CLI
-go build -o bin/larkbot ./cmd/larkbot         # build the Lark bot
-go vet ./...                                   # lint
+go build -o bin/askplanner_cli ./cmd/askplanner   # build the CLI
+go build -o bin/askplanner_lark ./cmd/larkbot     # build the Lark bot
+go vet ./...                                      # lint
 ```
 
 ## Architecture

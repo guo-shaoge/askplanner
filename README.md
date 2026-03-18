@@ -53,8 +53,8 @@ export KIMI_API_KEY="sk-your-key-here"
 echo "sk-your-key-here" > keys/kimi_free
 
 # Build and run
-go build -o bin/askplanner ./cmd/askplanner
-./bin/askplanner
+go build -o bin/askplanner_cli ./cmd/askplanner
+./bin/askplanner_cli
 ```
 
 You'll see a REPL prompt:
@@ -84,12 +84,12 @@ The Lark bot mode connects the same agent to Feishu/Lark via websocket, so users
 ### Build & Run
 
 ```bash
-go build -o bin/larkbot ./cmd/larkbot
+go build -o bin/askplanner_lark ./cmd/larkbot
 
 FEISHU_APP_ID="cli_xxxx" \
 FEISHU_APP_SECRET="xxxx" \
 KIMI_API_KEY="sk-your-key-here" \
-./bin/larkbot
+./bin/askplanner_lark
 ```
 
 The bot will connect via websocket and start listening for messages. Send a message to the bot in Feishu and it will reply with the agent's answer.
@@ -129,7 +129,7 @@ All configuration is via environment variables with sensible defaults:
 
 Switch models:
 ```bash
-KIMI_MODEL=kimi-k2-0905-preview ./bin/askplanner
+KIMI_MODEL=kimi-k2-0905-preview ./bin/askplanner_cli
 ```
 
 ## Project Structure
