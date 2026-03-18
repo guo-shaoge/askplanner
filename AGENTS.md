@@ -2,177 +2,224 @@
 
 ## What This Is
 
-An AI agent that answers TiDB query optimizer questions. It uses Kimi (Moonshot AI) as the LLM backend and reads engineer-written skills + TiDB planner source code on demand via tool calling.
+askplanner is a TiDB query optimizer Q&A assistant.
 
-There are two entrypoints:
-- `cmd/askplanner` — terminal REPL for local interactive use
-- `cmd/larkbot` — Feishu/Lark websocket bot that receives chat messages and replies with the same agent
+The current architecture uses Codex CLI as the primary runtime. askplanner itself is now mainly:
+- a domain prompt generator
+- a Codex prompt normalizer
+- a transport relay for CLI and Lark
+- a local session manager for Codex threads
 
-## Build & Verify
+The runtime no longer depends on the old in-process Kimi tool-calling loop for normal user requests.
 
-```bash
-go build -o bin/askplanner_cli ./cmd/askplanner   # build the CLI
-go build -o bin/askplanner_lark ./cmd/larkbot     # build the Lark bot
-go vet ./...                                      # lint
-```
+## Entry Points
 
-## Architecture
+- `cmd/askplanner` — local REPL backed by Codex CLI
+- `cmd/larkbot` — Feishu/Lark websocket bot backed by Codex CLI
+- `cmd/printprompt` — prints the askplanner system prompt
 
-### Internal Package Design
+Important:
+- `./bin/printprompt` prints the raw askplanner system prompt
+- `./bin/printprompt --normalized` prints the Codex-normalized prompt
 
-Shared logic now lives under `internal/askplanner/` across a few focused packages:
-- `askplanner` — agent loop and system prompt assembly
-- `llmprovider` — provider interfaces and concrete LLM backends
-- `tools` — tool interface/registry plus all tool implementations, skill indexing, and docs overlay loading
-- `config` — application configuration from env vars
-- `util` — small shared infrastructure helpers such as sandboxing
-
-Both `cmd/askplanner/main.go` and `cmd/larkbot/main.go` consume these shared packages and only differ in transport wiring.
-
-### cmd/larkbot Overview
-
-`cmd/larkbot/main.go` wraps the same `askplanner.Agent` used by the CLI in a Feishu/Lark websocket event loop.
+## Current Runtime Flow
 
 High-level flow:
-1. Read `FEISHU_APP_ID` and `FEISHU_APP_SECRET`
-2. Build the shared agent via `buildAgent()`
-3. Start a websocket client with `im.message.receive_v1` handler
-4. Extract incoming text message content
-5. Call `agent.Answer(...)`
-6. Reply to the original message with plain text
 
-Important behavior:
-- Empty incoming text falls back to `"Please introduce your capabilities."`
-- Tool calls are logged for debugging
-- Agent errors are returned to chat as `Agent Error: ...`
-- Sandbox, skills index, provider selection, and rate limiting are shared with the CLI path
+1. Load the askplanner prompt from `bin/printprompt` or the fallback prompt builder
+2. Normalize the prompt for Codex CLI
+3. Look up the conversation's stored `session_id`
+4. Run `codex exec` for a new conversation or `codex exec resume` for an existing one
+5. Capture the final answer and persist updated session metadata
+6. Return plain text to the REPL or Lark
 
-### Key Types
+The active runtime is in `internal/codex/`.
+
+## Internal Package Design
+
+### Active Runtime
+
+- `internal/codex/prompt_source.go`
+  Loads the bootstrap prompt from `CODEX_PROMPT_COMMAND` and supports command arguments.
+  Falls back to the in-process prompt builder if the command is unavailable.
+
+- `internal/codex/prompt_normalizer.go`
+  Adapts the askplanner prompt for Codex CLI.
+  This is the bridge that translates references to legacy askplanner tools into shell/workspace behavior.
+
+- `internal/codex/runner.go`
+  Spawns `codex exec` and `codex exec resume`.
+  Parses `thread.started.thread_id` from JSONL output as the Codex session identifier.
+
+- `internal/codex/session_store.go`
+  Persists `conversation_key -> session_id` mappings in `.askplanner/codex_sessions.json`.
+
+- `internal/codex/responder.go`
+  Orchestrates prompt loading, session reuse, fallback to new sessions, timeout handling, and per-conversation history summarization.
+
+### Canonical Prompt Source
+
+- `internal/askplanner/agent.go`
+  Still owns the canonical askplanner system prompt assembly.
+
+- `internal/askplanner/tools/skills.go`
+  Still builds the compact skills index used in the prompt.
+
+- `internal/askplanner/tools/docsindex.go`
+  Still builds the curated official docs overlay used in the prompt.
+
+### Legacy Runtime Packages
+
+- `internal/askplanner/llmprovider/`
+- `internal/askplanner/tools/registry.go`
+- `internal/askplanner/tools/readfile.go`
+- `internal/askplanner/tools/searchcode.go`
+- `internal/askplanner/tools/searchdocs.go`
+- `internal/askplanner/tools/listdir.go`
+- `internal/askplanner/tools/toolskills.go`
+- `internal/askplanner/util/sandbox.go`
+
+These still matter for reference and prompt generation, but they are not on the hot path for `cmd/askplanner` or `cmd/larkbot`.
+
+Do not assume the model is currently calling these as live tools.
+
+## Key Types
 
 | Type | File | Role |
 |------|------|------|
-| `llmprovider.Provider` | `internal/askplanner/llmprovider/provider.go` | Interface for any LLM backend (`Complete` + `Name`) |
-| `llmprovider.KimiProvider` | `internal/askplanner/llmprovider/kimi.go` | Kimi/Moonshot API client with 429 retry |
-| `askplanner.Agent` / `askplanner.AgentConfig` | `internal/askplanner/agent.go` | Orchestrates the LLM-tool loop |
-| `config.Config` | `internal/askplanner/config/config.go` | App configuration from env vars |
-| `tools.Tool` | `internal/askplanner/tools/registry.go` | Interface for tools (`Name`, `Description`, `Parameters`, `Execute`) |
-| `tools.Registry` | `internal/askplanner/tools/registry.go` | Holds tools, provides `Definitions()` for LLM and `Execute()` for dispatch |
-| `util.Sandbox` | `internal/askplanner/util/sandbox.go` | Path validation — restricts file access to allowed directory roots |
-| `tools.Index` | `internal/askplanner/tools/skills.go` | Pre-scanned skill metadata for system prompt |
+| `codex.Responder` | `internal/codex/responder.go` | Main runtime entrypoint used by CLI and Lark |
+| `codex.Runner` | `internal/codex/runner.go` | Codex CLI subprocess wrapper |
+| `codex.FileSessionStore` | `internal/codex/session_store.go` | Persistent session mapping store |
+| `config.Config` | `internal/askplanner/config/config.go` | Runtime config, including Codex settings |
+| `askplanner.Agent` | `internal/askplanner/agent.go` | Canonical prompt builder, not the primary runtime |
 
-Note: `config.Config` (app config) and `askplanner.AgentConfig` (agent wiring) are separate structs.
+## Prompt Model
 
-### Agent Loop (agent.go)
+There are now two prompt layers:
 
+1. Raw askplanner system prompt
+   Generated from:
+   - the TiDB tuning system prompt
+   - the skills index
+   - the official docs overlay
+
+2. Normalized Codex prompt
+   Adds:
+   - shell-based replacements for legacy askplanner tool names
+   - read-only runtime assumptions
+   - language behavior for replies
+
+Important:
+- `NormalizePrompt()` is idempotent
+- `CODEX_PROMPT_COMMAND` may point to `bin/printprompt --normalized`
+- the responder still calls `NormalizePrompt()` defensively
+
+## Session Model
+
+Sessions are keyed by conversation.
+
+### CLI
+
+The REPL uses a fixed local conversation key and supports:
+- `reset` to drop the stored session
+- `quit` / `exit` to leave the REPL
+
+### Lark
+
+`cmd/larkbot` builds the conversation key in this order:
+- `thread_id`
+- otherwise `chat_id + sender_id`
+- otherwise a message-level fallback
+
+This prevents unrelated group-chat users from sharing the same Codex thread by default.
+
+### Session Expiry
+
+The responder forces a new Codex session when:
+- the prompt hash changes
+- the configured max-turn limit is reached
+- the configured session TTL expires
+- a resume call fails
+
+## Build and Verify
+
+```bash
+go build -o bin/askplanner_cli ./cmd/askplanner
+go build -o bin/askplanner_lark ./cmd/larkbot
+go build -o bin/printprompt ./cmd/printprompt
+go test ./...
 ```
-Answer(question) ->
-  messages = [system_prompt, user_question]
-  loop (max 50 steps):
-    response = LLM.Complete(messages, tool_definitions)
-    if no tool_calls: return response.Content
-    for each tool_call:
-      result = Registry.Execute(tool_name, args_json)
-      append tool result to messages
-    sleep(step_delay)  // rate limit protection
-```
-
-Tool errors become `"TOOL_ERROR: <msg>"` strings so the LLM can reason about failures.
-
-### Lazy Skills Strategy
-
-The 212+ skill files (~80KB+) cannot fit in the 8k context window. The system prompt includes only:
-1. SKILL.md (89 lines — core diagnostic workflow)
-2. A compact file index (filenames only)
-
-The LLM uses `list_skills` and `read_skill` tools to read specific files on demand.
-
-Official SQL tuning docs are handled separately through a local overlay under `prompts/tidb-query-tuning-official-docs/`. That overlay is optional: if the overlay assets or `contrib/tidb-docs/` are missing, startup logs a warning and continues without `search_docs`.
-
-### Sandboxing (`util/sandbox.go`)
-
-All file-reading tools go through `util.Sandbox.Resolve()` which validates paths against an allowlist. This prevents the LLM from reading API keys, `.git`, or anything outside designated directories.
-
-Allowed roots are configured when each entrypoint builds the agent:
-- `contrib/agent-rules/skills/tidb-query-tuning/references/`
-- `contrib/tidb/pkg/planner/`, `statistics/`, `expression/`, `parser/`
-- `contrib/tidb/.agents/skills/`, `contrib/tidb/AGENTS.md`
-- `contrib/tidb-docs/`
-
-### Rate Limiting
-
-Kimi free-tier returns 429 frequently. Two mitigations:
-1. **Retry with backoff** in `internal/askplanner/llmprovider/kimi.go`: 5s, 10s, 20s on 429 responses
-2. **Step delay** in `agent.go`: configurable pause (default 1s) between LLM requests
-
-### Tools (6 total)
-
-| Tool | File | Purpose |
-|------|------|---------|
-| `read_file` | `internal/askplanner/tools/readfile.go` | Read sandboxed files with offset/limit (default 200 lines) |
-| `search_code` | `internal/askplanner/tools/searchcode.go` | Grep via `rg` (or `grep` fallback), max 30 results, for code internals |
-| `search_docs` | `internal/askplanner/tools/searchdocs.go` | Search curated official TiDB SQL tuning docs |
-| `list_dir` | `internal/askplanner/tools/listdir.go` | List directory with `[dir]`/`[file]` markers |
-| `list_skills` | `internal/askplanner/tools/toolskills.go` | List skill files by category: core, oncall, customer-issues |
-| `read_skill` | `internal/askplanner/tools/toolskills.go` | Read a specific skill .md file by name |
-
-## How to Extend
-
-### Add a new tool
-1. Create a struct in `internal/askplanner/tools/` implementing the `tools.Tool` interface
-2. Register it anywhere the shared agent is constructed (`cmd/askplanner/main.go`, `cmd/larkbot/main.go`) via `tools.NewRegistry(...)`
-
-### Add a new LLM provider
-1. Implement `llmprovider.Provider` in a new file in `internal/askplanner/llmprovider/` (e.g. `openai.go`)
-2. Add a case in the `switch cfg.LLMProvider` block anywhere the shared agent is constructed (`cmd/askplanner/main.go`, `cmd/larkbot/main.go`)
-
-### Add a new skill category
-1. Update `BuildIndex()` in `internal/askplanner/tools/skills.go` to scan the new directory
-2. Update `ListSkillsTool.Execute()` in `internal/askplanner/tools/toolskills.go` to expose the new category
-3. Update `ReadSkillTool.Execute()` in `internal/askplanner/tools/toolskills.go` to resolve the name prefix
 
 ## Configuration
 
-All via environment variables. See README.md for the full table. Key ones:
-- `KIMI_API_KEY` or `keys/kimi_free` file
-- `KIMI_MODEL` — default `moonshot-v1-8k` (cheapest, 8k context)
-- `STEP_DELAY_MS` — default 1000ms between LLM calls
-- `MAX_TOOL_STEPS` — default 50
-- `MAX_RESULT_CHARS` — default 12000 (truncation limit per tool result)
-- `TIDB_DOCS_DIR` — default `contrib/tidb-docs`
-- `DOCS_OVERLAY_DIR` — default `prompts/tidb-query-tuning-official-docs`
+Main runtime variables:
 
-Lark bot specific:
-- `FEISHU_APP_ID` (required)
-- `FEISHU_APP_SECRET` (required)
+- `CODEX_BIN`
+- `CODEX_MODEL`
+- `CODEX_REASONING_EFFORT`
+- `CODEX_SANDBOX`
+- `CODEX_PROJECT_ROOT`
+- `CODEX_PROMPT_COMMAND`
+- `CODEX_SESSION_STORE`
+- `CODEX_MAX_TURNS`
+- `CODEX_SESSION_TTL_HOURS`
+- `CODEX_TIMEOUT_SEC`
 
-Feishu app prerequisites for `cmd/larkbot`:
-- Enable websocket event subscription (Long Connection)
-- Subscribe to `im.message.receive_v1`
-- Grant scopes: `im:message`, `im:message:send_as_bot`
+Prompt-source variables:
 
-## Project Layout
+- `SKILLS_DIR`
+- `TIDB_CODE_DIR`
+- `TIDB_DOCS_DIR`
+- `DOCS_OVERLAY_DIR`
 
+Lark bot variables:
+
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+
+## Current Constraints
+
+- The runtime does not yet expose askplanner's legacy tools as MCP tools to Codex.
+- The current approach relies on Codex reading the local workspace directly.
+- `internal/askplanner/util/sandbox.go` still exists, but current Codex runtime safety comes primarily from the Codex sandbox mode, not from the old askplanner tool sandbox.
+- If you want stricter parity with the old read allowlist, the next architectural step is a dedicated workspace projection or an MCP bridge.
+
+## How To Change Behavior
+
+### Change the user-facing domain prompt
+
+Edit:
+- `internal/askplanner/agent.go`
+- `internal/askplanner/tools/skills.go`
+- `internal/askplanner/tools/docsindex.go`
+
+Verify with:
+
+```bash
+./bin/printprompt
+./bin/printprompt --normalized
 ```
-cmd/askplanner/main.go         Entry point: config, wiring, REPL
-cmd/larkbot/main.go            Entry point: Feishu/Lark websocket bot
-internal/askplanner/           Agent loop and prompt assembly
-internal/askplanner/config/    Application configuration loading
-internal/askplanner/llmprovider/ LLM provider interfaces and implementations
-internal/askplanner/tools/     Tool registry, tool implementations, and skill index
-internal/askplanner/util/      Shared helpers such as sandboxing
-contrib/agent-rules/           Skills repository (git submodule)
-contrib/tidb/                  TiDB source code
-contrib/tidb-docs/             Official TiDB docs (git submodule)
-prompts/                       Local prompt overlays and manifests
-keys/                          API key files (gitignored)
-llm_api/kimi/                  Kimi API documentation (reference only)
-```
 
-## Conventions
+### Change Codex-specific runtime instructions
 
-- `internal/askplanner/*` stays stdlib-only; `cmd/larkbot` is the place that pulls in the Lark SDK
-- Module path: `lab/askplanner`
-- All Kimi API wire types are private (lowercase) in `internal/askplanner/llmprovider/kimi.go`
-- Tool results are plain strings, truncated to `maxResultChars`
-- System prompt is built once at startup from the skill index
-- `cmd/larkbot` parses text message JSON payloads (`{"text":"..."}`) and replies with Feishu `text` messages
+Edit:
+- `internal/codex/prompt_normalizer.go`
+
+### Change how Codex is invoked
+
+Edit:
+- `internal/codex/runner.go`
+
+### Change session semantics
+
+Edit:
+- `internal/codex/session_store.go`
+- `internal/codex/responder.go`
+- `cmd/larkbot/main.go`
+
+## Practical Notes
+
+- Prefer reading `cmd/printprompt/main.go` and `internal/codex/*` before editing runtime behavior.
+- Do not assume README-era Kimi instructions are still current.
+- If you are changing docs, keep README and this AGENTS file aligned.
+- If you are changing prompt behavior, verify both raw and normalized prompt outputs.

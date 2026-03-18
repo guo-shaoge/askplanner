@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -15,11 +14,8 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
-	"lab/askplanner/internal/askplanner"
 	askconfig "lab/askplanner/internal/askplanner/config"
-	"lab/askplanner/internal/askplanner/llmprovider"
-	"lab/askplanner/internal/askplanner/tools"
-	"lab/askplanner/internal/askplanner/util"
+	"lab/askplanner/internal/codex"
 )
 
 func main() {
@@ -28,9 +24,14 @@ func main() {
 	appID := mustGetEnv("FEISHU_APP_ID")
 	appSecret := mustGetEnv("FEISHU_APP_SECRET")
 
-	agent, err := buildAgent()
+	cfg, err := askconfig.Load()
 	if err != nil {
-		log.Fatalf("build agent: %v", err)
+		log.Fatalf("load config: %v", err)
+	}
+
+	responder, err := codex.NewResponder(context.Background(), cfg)
+	if err != nil {
+		log.Fatalf("build codex responder: %v", err)
 	}
 
 	apiClient := lark.NewClient(appID, appSecret, lark.WithLogLevel(larkcore.LogLevelInfo))
@@ -50,11 +51,11 @@ func main() {
 				question = "Please introduce your capabilities."
 			}
 
-			log.Printf("[larkbot] answering question: %q (message_id=%s)", question, messageID)
+			conversationKey := buildConversationKey(event)
+			log.Printf("[larkbot] answering question: %q (message_id=%s, conversation=%s)",
+				question, messageID, conversationKey)
 
-			answer, err := agent.Answer(ctx, question, func(toolName, args string) {
-				log.Printf("[larkbot]   [tool] %s(%s)", toolName, truncate(args, 100))
-			})
+			answer, err := responder.Answer(ctx, conversationKey, question)
 			if err != nil {
 				log.Printf("[larkbot] agent error: %v (message_id=%s)", err, messageID)
 				answer = "Agent Error: " + err.Error()
@@ -81,74 +82,6 @@ func main() {
 	if err := cli.Start(context.Background()); err != nil {
 		log.Fatalf("lark websocket start: %v", err)
 	}
-}
-
-// todo code duplicated with cmd/askplanner/main.go
-func buildAgent() (*askplanner.Agent, error) {
-	cfg, err := askconfig.Load()
-	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
-	}
-
-	var provider llmprovider.Provider
-	switch cfg.LLMProvider {
-	case "kimi":
-		provider = llmprovider.NewKimiProvider(cfg.KimiAPIKey, cfg.KimiModel, cfg.KimiBaseURL)
-	default:
-		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.LLMProvider)
-	}
-
-	skillIdx, err := tools.BuildIndex(cfg.SkillsDir)
-	if err != nil {
-		return nil, fmt.Errorf("build skill index: %w", err)
-	}
-	log.Printf("[larkbot] skills loaded: %d core, %d oncall, %d customer issues",
-		len(skillIdx.CoreFiles), len(skillIdx.OncallFiles), skillIdx.CustomerIssues)
-
-	docsOverlay := tools.LoadDocsOverlay(cfg.DocsOverlayDir, cfg.TiDBDocsDir)
-	if docsOverlay.Available {
-		log.Printf("[larkbot] official docs overlay loaded: %d curated docs", len(docsOverlay.Docs))
-	} else if docsOverlay.Warning != "" {
-		log.Printf("[larkbot] warning: %s", docsOverlay.Warning)
-	}
-	if cfg.AgentDebug {
-		log.Printf("[larkbot] agent debug enabled: concise loop tracing")
-	}
-
-	sandbox := util.NewSandbox(cfg.ProjectRoot, []string{
-		"contrib/agent-rules/skills/tidb-query-tuning/references",
-		"contrib/tidb/pkg/planner",
-		"contrib/tidb/pkg/statistics",
-		"contrib/tidb/pkg/expression",
-		"contrib/tidb/pkg/parser",
-		"contrib/tidb/.agents/skills",
-		"contrib/tidb/AGENTS.md",
-		"contrib/tidb-docs",
-	})
-
-	regTools := []tools.Tool{
-		tools.NewReadFileTool(sandbox),
-		tools.NewSearchCodeTool(sandbox, "contrib/tidb/pkg/planner"),
-		tools.NewListDirTool(sandbox),
-		tools.NewListSkillsTool(cfg.SkillsDir),
-		tools.NewReadSkillTool(cfg.SkillsDir),
-	}
-	if docsOverlay.Available {
-		regTools = append(regTools, tools.NewSearchDocsTool(cfg.ProjectRoot, cfg.TiDBDocsDir, docsOverlay))
-	}
-	toolReg := tools.NewRegistry(regTools...)
-
-	return askplanner.New(askplanner.AgentConfig{
-		Provider:       provider,
-		ToolRegistry:   toolReg,
-		SkillIndex:     skillIdx,
-		DocsOverlay:    docsOverlay,
-		Debug:          cfg.AgentDebug,
-		Temperature:    cfg.Temperature,
-		MaxToolSteps:   cfg.MaxToolSteps,
-		MaxResultChars: cfg.MaxResultChars,
-		StepDelay:      time.Duration(cfg.StepDelayMS) * time.Millisecond,
-	}), nil
 }
 
 func mustGetEnv(key string) string {
@@ -185,6 +118,49 @@ func extractQuestion(event *larkim.P2MessageReceiveV1) string {
 		}
 	}
 	return raw
+}
+
+func buildConversationKey(event *larkim.P2MessageReceiveV1) string {
+	if event == nil || event.Event == nil {
+		return "lark:unknown"
+	}
+
+	var threadID string
+	var chatID string
+	var senderID string
+	var messageID string
+
+	if event.Event.Message != nil {
+		if event.Event.Message.ThreadId != nil {
+			threadID = strings.TrimSpace(*event.Event.Message.ThreadId)
+		}
+		if event.Event.Message.ChatId != nil {
+			chatID = strings.TrimSpace(*event.Event.Message.ChatId)
+		}
+		if event.Event.Message.MessageId != nil {
+			messageID = strings.TrimSpace(*event.Event.Message.MessageId)
+		}
+	}
+	if event.Event.Sender != nil && event.Event.Sender.SenderId != nil {
+		if event.Event.Sender.SenderId.OpenId != nil {
+			senderID = strings.TrimSpace(*event.Event.Sender.SenderId.OpenId)
+		} else if event.Event.Sender.SenderId.UserId != nil {
+			senderID = strings.TrimSpace(*event.Event.Sender.SenderId.UserId)
+		}
+	}
+
+	switch {
+	case threadID != "":
+		return "lark:thread:" + threadID
+	case chatID != "" && senderID != "":
+		return "lark:chat:" + chatID + ":user:" + senderID
+	case chatID != "":
+		return "lark:chat:" + chatID
+	case messageID != "":
+		return "lark:message:" + messageID
+	default:
+		return "lark:unknown"
+	}
 }
 
 func buildTextContent(text string) (string, error) {

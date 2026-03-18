@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -8,10 +9,14 @@ import (
 	"lab/askplanner/internal/askplanner"
 	askconfig "lab/askplanner/internal/askplanner/config"
 	"lab/askplanner/internal/askplanner/tools"
+	"lab/askplanner/internal/codex"
 )
 
 func main() {
 	log.SetFlags(0)
+
+	normalized := flag.Bool("normalized", false, "output the Codex-normalized system prompt")
+	flag.Parse()
 
 	cfg, err := askconfig.LoadPromptOnly()
 	if err != nil {
@@ -29,7 +34,12 @@ func main() {
 		DocsOverlay: docsOverlay,
 	})
 
-	if _, err := fmt.Fprint(os.Stdout, agent.SystemPrompt()); err != nil {
+	prompt := agent.SystemPrompt()
+	if *normalized {
+		prompt = codex.NormalizePrompt(prompt)
+	}
+
+	if _, err := fmt.Fprint(os.Stdout, prompt); err != nil {
 		log.Fatalf("write prompt: %v", err)
 	}
 }

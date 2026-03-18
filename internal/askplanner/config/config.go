@@ -9,6 +9,8 @@ import (
 )
 
 type Config struct {
+	CoreBackend string
+
 	// LLM
 	LLMProvider string
 	KimiAPIKey  string
@@ -28,6 +30,18 @@ type Config struct {
 	TiDBCodeDir    string
 	TiDBDocsDir    string
 	DocsOverlayDir string
+
+	// Codex runtime
+	CodexBin             string
+	CodexModel           string
+	CodexReasoningEffort string
+	CodexSandbox         string
+	CodexProjectRoot     string
+	CodexPromptCommand   string
+	CodexSessionStore    string
+	CodexMaxTurns        int
+	CodexSessionTTLHours int
+	CodexTimeoutSec      int
 }
 
 func Load() (*Config, error) {
@@ -44,26 +58,40 @@ func load(requireAPIKey bool) (*Config, error) {
 		return nil, fmt.Errorf("detect project root: %w", err)
 	}
 
+	coreBackend := envOrDefault("CORE_BACKEND", "codex")
 	apiKey := loadAPIKey(projectRoot)
-	if requireAPIKey && apiKey == "" {
+	if requireAPIKey && coreBackend == "kimi" && apiKey == "" {
 		return nil, fmt.Errorf("KIMI_API_KEY not set and keys/kimi_free not found")
 	}
 
 	return &Config{
-		LLMProvider:    envOrDefault("LLM_PROVIDER", "kimi"),
-		KimiAPIKey:     apiKey,
-		KimiBaseURL:    envOrDefault("KIMI_BASE_URL", "https://api.moonshot.cn"),
-		KimiModel:      envOrDefault("KIMI_MODEL", "moonshot-v1-8k"),
-		Temperature:    envAsFloat("TEMPERATURE", 0.2),
-		AgentDebug:     envAsBool("AGENT_DEBUG", false),
-		MaxToolSteps:   envAsInt("MAX_TOOL_STEPS", 50),
-		MaxResultChars: envAsInt("MAX_RESULT_CHARS", 12000),
-		StepDelayMS:    envAsInt("STEP_DELAY_MS", 1000),
-		ProjectRoot:    projectRoot,
-		SkillsDir:      filepath.Join(projectRoot, envOrDefault("SKILLS_DIR", "contrib/agent-rules/skills/tidb-query-tuning/references")),
-		TiDBCodeDir:    filepath.Join(projectRoot, envOrDefault("TIDB_CODE_DIR", "contrib/tidb")),
-		TiDBDocsDir:    filepath.Join(projectRoot, envOrDefault("TIDB_DOCS_DIR", "contrib/tidb-docs")),
-		DocsOverlayDir: filepath.Join(projectRoot, envOrDefault("DOCS_OVERLAY_DIR", "prompts/tidb-query-tuning-official-docs")),
+		CoreBackend:          coreBackend,
+		LLMProvider:          envOrDefault("LLM_PROVIDER", "kimi"),
+		KimiAPIKey:           apiKey,
+		KimiBaseURL:          envOrDefault("KIMI_BASE_URL", "https://api.moonshot.cn"),
+		KimiModel:            envOrDefault("KIMI_MODEL", "moonshot-v1-8k"),
+		Temperature:          envAsFloat("TEMPERATURE", 0.2),
+		AgentDebug:           envAsBool("AGENT_DEBUG", false),
+		MaxToolSteps:         envAsInt("MAX_TOOL_STEPS", 50),
+		MaxResultChars:       envAsInt("MAX_RESULT_CHARS", 12000),
+		StepDelayMS:          envAsInt("STEP_DELAY_MS", 1000),
+		ProjectRoot:          projectRoot,
+		SkillsDir:            resolvePath(projectRoot, envOrDefault("SKILLS_DIR", "contrib/agent-rules/skills/tidb-query-tuning/references")),
+		TiDBCodeDir:          resolvePath(projectRoot, envOrDefault("TIDB_CODE_DIR", "contrib/tidb")),
+		TiDBDocsDir:          resolvePath(projectRoot, envOrDefault("TIDB_DOCS_DIR", "contrib/tidb-docs")),
+		DocsOverlayDir:       resolvePath(projectRoot, envOrDefault("DOCS_OVERLAY_DIR", "prompts/tidb-query-tuning-official-docs")),
+		CodexBin:             envOrDefault("CODEX_BIN", "codex"),
+		CodexModel:           envOrDefault("CODEX_MODEL", "gpt-5.3-codex"),
+		CodexReasoningEffort: envOrDefault("CODEX_REASONING_EFFORT", "medium"),
+		CodexSandbox:         envOrDefault("CODEX_SANDBOX", "read-only"),
+		CodexProjectRoot: resolvePath(projectRoot,
+			envOrDefault("CODEX_PROJECT_ROOT", ".")),
+		CodexPromptCommand: envOrDefault("CODEX_PROMPT_COMMAND", "bin/printprompt"),
+		CodexSessionStore: resolvePath(projectRoot,
+			envOrDefault("CODEX_SESSION_STORE", ".askplanner/codex_sessions.json")),
+		CodexMaxTurns:        envAsInt("CODEX_MAX_TURNS", 30),
+		CodexSessionTTLHours: envAsInt("CODEX_SESSION_TTL_HOURS", 24),
+		CodexTimeoutSec:      envAsInt("CODEX_TIMEOUT_SEC", 120),
 	}, nil
 }
 
@@ -148,4 +176,11 @@ func envAsBool(key string, defaultVal bool) bool {
 	default:
 		return defaultVal
 	}
+}
+
+func resolvePath(projectRoot, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(projectRoot, path)
 }

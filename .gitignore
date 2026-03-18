@@ -1,6 +1,10 @@
 *.log
+askplanner
+larkbot
+printprompt
 bin/*
 keys/*
+.askplanner/*
 !keys/.gitkeep
 contrib/*
 !contrib/.gitkeep

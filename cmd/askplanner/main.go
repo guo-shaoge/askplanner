@@ -8,13 +8,9 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"time"
 
-	"lab/askplanner/internal/askplanner"
 	askconfig "lab/askplanner/internal/askplanner/config"
-	"lab/askplanner/internal/askplanner/llmprovider"
-	"lab/askplanner/internal/askplanner/tools"
-	"lab/askplanner/internal/askplanner/util"
+	"lab/askplanner/internal/codex"
 )
 
 func main() {
@@ -25,80 +21,21 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	// Build LLM provider
-	var provider llmprovider.Provider
-	switch cfg.LLMProvider {
-	case "kimi":
-		provider = llmprovider.NewKimiProvider(cfg.KimiAPIKey, cfg.KimiModel, cfg.KimiBaseURL)
-	default:
-		log.Fatalf("unsupported LLM provider: %s", cfg.LLMProvider)
-	}
-
-	// Build skill index
-	skillIdx, err := tools.BuildIndex(cfg.SkillsDir)
-	if err != nil {
-		log.Fatalf("build skill index: %v", err)
-	}
-	log.Printf("Skills loaded: %d core, %d oncall, %d customer issues",
-		len(skillIdx.CoreFiles), len(skillIdx.OncallFiles), skillIdx.CustomerIssues)
-
-	docsOverlay := tools.LoadDocsOverlay(cfg.DocsOverlayDir, cfg.TiDBDocsDir)
-	if docsOverlay.Available {
-		log.Printf("Official docs overlay loaded: %d curated docs", len(docsOverlay.Docs))
-	} else if docsOverlay.Warning != "" {
-		log.Printf("Warning: %s", docsOverlay.Warning)
-	}
-	if cfg.AgentDebug {
-		log.Printf("Agent debug enabled: concise loop tracing")
-	}
-
-	// Build sandbox with allowed paths
-	sandbox := util.NewSandbox(cfg.ProjectRoot, []string{
-		"contrib/agent-rules/skills/tidb-query-tuning/references",
-		"contrib/tidb/pkg/planner",
-		"contrib/tidb/pkg/statistics",
-		"contrib/tidb/pkg/expression",
-		"contrib/tidb/pkg/parser",
-		"contrib/tidb/.agents/skills",
-		"contrib/tidb/AGENTS.md",
-		"contrib/tidb-docs",
-	})
-
-	// Build tool registry
-	regTools := []tools.Tool{
-		tools.NewReadFileTool(sandbox),
-		tools.NewSearchCodeTool(sandbox, "contrib/tidb/pkg/planner"),
-		tools.NewListDirTool(sandbox),
-		tools.NewListSkillsTool(cfg.SkillsDir),
-		tools.NewReadSkillTool(cfg.SkillsDir),
-	}
-	if docsOverlay.Available {
-		regTools = append(regTools, tools.NewSearchDocsTool(cfg.ProjectRoot, cfg.TiDBDocsDir, docsOverlay))
-	}
-	toolReg := tools.NewRegistry(regTools...)
-
-	// Build agent
-	a := askplanner.New(askplanner.AgentConfig{
-		Provider:       provider,
-		ToolRegistry:   toolReg,
-		SkillIndex:     skillIdx,
-		DocsOverlay:    docsOverlay,
-		Debug:          cfg.AgentDebug,
-		Temperature:    cfg.Temperature,
-		MaxToolSteps:   cfg.MaxToolSteps,
-		MaxResultChars: cfg.MaxResultChars,
-		StepDelay:      time.Duration(cfg.StepDelayMS) * time.Millisecond,
-	})
-
 	// Run REPL
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	fmt.Printf("askplanner (model: %s, provider: %s)\n", cfg.KimiModel, cfg.LLMProvider)
-	fmt.Println("Type your question, or 'quit' to exit.")
+	responder, err := codex.NewResponder(ctx, cfg)
+	if err != nil {
+		log.Fatalf("build codex responder: %v", err)
+	}
+
+	fmt.Printf("askplanner (backend: codex-cli, model: %s)\n", cfg.CodexModel)
+	fmt.Println("Type your question, or 'quit' to exit. Use 'reset' to start a new local session.")
 	fmt.Println()
 
 	scanner := bufio.NewScanner(os.Stdin)
+	const conversationKey = "cli:default"
 	for {
 		fmt.Print("> ")
 		if !scanner.Scan() {
@@ -113,16 +50,18 @@ func main() {
 			fmt.Println("Bye!")
 			break
 		}
+		if question == "reset" {
+			if err := responder.Reset(conversationKey); err != nil {
+				fmt.Printf("Error: %v\n\n", err)
+			} else {
+				fmt.Println("Local Codex session reset.")
+				fmt.Println()
+			}
+			continue
+		}
 
 		fmt.Println()
-		answer, err := a.Answer(ctx, question, func(toolName, args string) {
-			// Show tool call progress to the user
-			argsSummary := args
-			if len(argsSummary) > 100 {
-				argsSummary = argsSummary[:100] + "..."
-			}
-			fmt.Printf("  [tool] %s(%s)\n", toolName, argsSummary)
-		})
+		answer, err := responder.Answer(ctx, conversationKey, question)
 		if err != nil {
 			fmt.Printf("Error: %v\n\n", err)
 			continue
