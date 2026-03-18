@@ -1,5 +1,7 @@
-all: cli larkbot
+all: cli larkbot printprompt
 
+printprompt:
+	go build -o bin/printprompt ./cmd/printprompt
 cli:
 	go build -o bin/askplanner_cli ./cmd/askplanner
 larkbot:

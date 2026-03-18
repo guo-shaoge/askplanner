@@ -25,7 +25,7 @@ func NewSearchCodeTool(sandbox *util.Sandbox, defaultPath string) *SearchCodeToo
 func (t *SearchCodeTool) Name() string { return "search_code" }
 
 func (t *SearchCodeTool) Description() string {
-	return "Search for a pattern in source code files using grep. Returns matching lines with file paths and line numbers. Useful for finding function definitions, variable usage, or specific code patterns in the TiDB codebase."
+	return "Search for a pattern in TiDB source code files using grep. Returns matching lines with file paths and line numbers. Use this for optimizer internals, implementation details, and code-level behavior. Use search_docs for official SQL tuning documentation."
 }
 
 func (t *SearchCodeTool) Parameters() map[string]any {

@@ -1,12 +1,12 @@
 # askplanner
 
-An AI agent that answers TiDB query optimizer questions by reading engineer-written skills and TiDB planner source code on demand via LLM tool calling.
+An AI agent that answers TiDB query optimizer questions by reading engineer-written skills, curated official TiDB SQL tuning docs, and TiDB planner source code on demand via LLM tool calling.
 
 ## How It Works
 
 1. You ask a question about TiDB query optimization
-2. The agent sends your question to an LLM (Kimi/Moonshot) with a system prompt containing the core diagnostic workflow (SKILL.md) and an index of 212+ reference files
-3. The LLM decides which tools to call — reading skill files, searching code, or browsing directories
+2. The agent sends your question to an LLM (Kimi/Moonshot) with a system prompt containing the core diagnostic workflow (SKILL.md), an index of 212+ reference files, and a local overlay distilled from official TiDB SQL tuning docs
+3. The LLM decides which tools to call — reading skill files, searching official docs, searching code, or browsing directories
 4. Tool results are fed back to the LLM, which may call more tools or return the final answer
 5. The answer is printed to your terminal
 
@@ -16,6 +16,7 @@ An AI agent that answers TiDB query optimizer questions by reading engineer-writ
 |------|---------|
 | `read_file` | Read source code files (sandboxed to allowed paths) |
 | `search_code` | Grep for patterns in TiDB planner code |
+| `search_docs` | Search curated official TiDB SQL tuning documentation |
 | `list_dir` | Browse directory structure |
 | `list_skills` | List skill/reference files by category |
 | `read_skill` | Read a specific skill or oncall experience |
@@ -29,11 +30,14 @@ The agent has access to 212+ reference files organized into:
 
 These come from the [pingcap/agent-rules](https://github.com/pingcap/agent-rules) repository (mounted at `contrib/agent-rules/`).
 
+The official docs overlay is maintained locally under `prompts/tidb-query-tuning-official-docs/` and is derived from the self-managed `SQL Tuning` section of `contrib/tidb-docs/TOC.md` plus `sql-tuning-best-practice.md`.
+
 ## Prerequisites
 
 - Go 1.23+
 - A Kimi (Moonshot AI) API key — get one at [platform.moonshot.cn](https://platform.moonshot.cn)
 - TiDB source code at `contrib/tidb/` (or symlinked)
+- TiDB docs at `contrib/tidb-docs/` for the official-doc overlay (optional but recommended)
 - Skills repository at `contrib/agent-rules/` (git submodule)
 - (Lark bot only) A Feishu/Lark app with **messaging** capability and websocket event enabled — create one at [open.feishu.cn](https://open.feishu.cn)
 
@@ -54,6 +58,7 @@ echo "sk-your-key-here" > keys/kimi_free
 
 # Build and run
 go build -o bin/askplanner_cli ./cmd/askplanner
+# you can use `export AGENT_DEBUG=1` will output more debug info
 ./bin/askplanner_cli
 ```
 
@@ -118,6 +123,10 @@ All configuration is via environment variables with sensible defaults:
 | `STEP_DELAY_MS` | `1000` | Delay (ms) between LLM requests (rate limit protection) |
 | `SKILLS_DIR` | `contrib/agent-rules/skills/tidb-query-tuning/references` | Skills path (relative to project root) |
 | `TIDB_CODE_DIR` | `contrib/tidb` | TiDB source path (relative to project root) |
+| `TIDB_DOCS_DIR` | `contrib/tidb-docs` | TiDB docs path (relative to project root) |
+| `DOCS_OVERLAY_DIR` | `prompts/tidb-query-tuning-official-docs` | Local official-doc overlay assets |
+
+If the docs overlay assets or `contrib/tidb-docs/` are missing, askplanner logs a warning and starts without `search_docs`. Skills and source-code tools still work.
 
 ### Model Options
 
@@ -146,20 +155,23 @@ askplanner/
 │   └── kimi.go                         # Kimi/Moonshot implementation (with retry)
 ├── internal/askplanner/tools/
 │   ├── skills.go                       # Skills directory scanner
+│   ├── docsindex.go                    # Official docs overlay loader
 │   ├── registry.go                     # Tool interface + registry
 │   ├── readfile.go                     # read_file tool
 │   ├── searchcode.go                   # search_code tool
+│   ├── searchdocs.go                   # search_docs tool
 │   ├── listdir.go                      # list_dir tool
 │   └── toolskills.go                   # list_skills + read_skill tools
 ├── internal/askplanner/util/
 │   └── sandbox.go                      # Path sandboxing
 ├── contrib/
 │   ├── agent-rules/                    # Skills from pingcap/agent-rules (submodule)
-│   └── tidb/                           # TiDB source code
+│   ├── tidb/                           # TiDB source code
+│   └── tidb-docs/                      # Official TiDB docs (submodule)
 ├── keys/                               # API key files (gitignored)
 ├── llm_api/kimi/                       # Kimi API documentation (reference)
 ├── Makefile
-├── prompt                              # the original prompt that I first used to build this project
+├── prompts/                            # Local prompt overlays and manifests
 ├── README.md
 └── AGENTS.md                           # help AI get onboard this project quickly
 ```
@@ -178,8 +190,13 @@ type Provider interface {
 Then wire it in `cmd/askplanner/main.go` under a new `LLM_PROVIDER` value.
 
 # Roadmap
+User perspective:
+1. 
+
+Implementation perspective
 1. support other LLM as backend
 2. support fetch url tool
 3. ~~integration with lark bot~~ ✓
 4. generate SKILL automatically based on user questions
-5. 
+5. automatically fetch lates agent-rules repo
+6. refactor duplicated code in cmd package and change name in cmd(from askplanner to cli)

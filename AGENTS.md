@@ -23,7 +23,7 @@ go vet ./...                                      # lint
 Shared logic now lives under `internal/askplanner/` across a few focused packages:
 - `askplanner` — agent loop and system prompt assembly
 - `llmprovider` — provider interfaces and concrete LLM backends
-- `tools` — tool interface/registry plus all tool implementations and skill indexing
+- `tools` — tool interface/registry plus all tool implementations, skill indexing, and docs overlay loading
 - `config` — application configuration from env vars
 - `util` — small shared infrastructure helpers such as sandboxing
 
@@ -86,6 +86,8 @@ The 212+ skill files (~80KB+) cannot fit in the 8k context window. The system pr
 
 The LLM uses `list_skills` and `read_skill` tools to read specific files on demand.
 
+Official SQL tuning docs are handled separately through a local overlay under `prompts/tidb-query-tuning-official-docs/`. That overlay is optional: if the overlay assets or `contrib/tidb-docs/` are missing, startup logs a warning and continues without `search_docs`.
+
 ### Sandboxing (`util/sandbox.go`)
 
 All file-reading tools go through `util.Sandbox.Resolve()` which validates paths against an allowlist. This prevents the LLM from reading API keys, `.git`, or anything outside designated directories.
@@ -94,6 +96,7 @@ Allowed roots are configured when each entrypoint builds the agent:
 - `contrib/agent-rules/skills/tidb-query-tuning/references/`
 - `contrib/tidb/pkg/planner/`, `statistics/`, `expression/`, `parser/`
 - `contrib/tidb/.agents/skills/`, `contrib/tidb/AGENTS.md`
+- `contrib/tidb-docs/`
 
 ### Rate Limiting
 
@@ -101,12 +104,13 @@ Kimi free-tier returns 429 frequently. Two mitigations:
 1. **Retry with backoff** in `internal/askplanner/llmprovider/kimi.go`: 5s, 10s, 20s on 429 responses
 2. **Step delay** in `agent.go`: configurable pause (default 1s) between LLM requests
 
-### Tools (5 total)
+### Tools (6 total)
 
 | Tool | File | Purpose |
 |------|------|---------|
 | `read_file` | `internal/askplanner/tools/readfile.go` | Read sandboxed files with offset/limit (default 200 lines) |
-| `search_code` | `internal/askplanner/tools/searchcode.go` | Grep via `rg` (or `grep` fallback), max 30 results |
+| `search_code` | `internal/askplanner/tools/searchcode.go` | Grep via `rg` (or `grep` fallback), max 30 results, for code internals |
+| `search_docs` | `internal/askplanner/tools/searchdocs.go` | Search curated official TiDB SQL tuning docs |
 | `list_dir` | `internal/askplanner/tools/listdir.go` | List directory with `[dir]`/`[file]` markers |
 | `list_skills` | `internal/askplanner/tools/toolskills.go` | List skill files by category: core, oncall, customer-issues |
 | `read_skill` | `internal/askplanner/tools/toolskills.go` | Read a specific skill .md file by name |
@@ -134,6 +138,8 @@ All via environment variables. See README.md for the full table. Key ones:
 - `STEP_DELAY_MS` — default 1000ms between LLM calls
 - `MAX_TOOL_STEPS` — default 50
 - `MAX_RESULT_CHARS` — default 12000 (truncation limit per tool result)
+- `TIDB_DOCS_DIR` — default `contrib/tidb-docs`
+- `DOCS_OVERLAY_DIR` — default `prompts/tidb-query-tuning-official-docs`
 
 Lark bot specific:
 - `FEISHU_APP_ID` (required)
@@ -156,6 +162,8 @@ internal/askplanner/tools/     Tool registry, tool implementations, and skill in
 internal/askplanner/util/      Shared helpers such as sandboxing
 contrib/agent-rules/           Skills repository (git submodule)
 contrib/tidb/                  TiDB source code
+contrib/tidb-docs/             Official TiDB docs (git submodule)
+prompts/                       Local prompt overlays and manifests
 keys/                          API key files (gitignored)
 llm_api/kimi/                  Kimi API documentation (reference only)
 ```

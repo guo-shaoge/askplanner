@@ -42,6 +42,16 @@ func main() {
 	log.Printf("Skills loaded: %d core, %d oncall, %d customer issues",
 		len(skillIdx.CoreFiles), len(skillIdx.OncallFiles), skillIdx.CustomerIssues)
 
+	docsOverlay := tools.LoadDocsOverlay(cfg.DocsOverlayDir, cfg.TiDBDocsDir)
+	if docsOverlay.Available {
+		log.Printf("Official docs overlay loaded: %d curated docs", len(docsOverlay.Docs))
+	} else if docsOverlay.Warning != "" {
+		log.Printf("Warning: %s", docsOverlay.Warning)
+	}
+	if cfg.AgentDebug {
+		log.Printf("Agent debug enabled: concise loop tracing")
+	}
+
 	// Build sandbox with allowed paths
 	sandbox := util.NewSandbox(cfg.ProjectRoot, []string{
 		"contrib/agent-rules/skills/tidb-query-tuning/references",
@@ -51,22 +61,29 @@ func main() {
 		"contrib/tidb/pkg/parser",
 		"contrib/tidb/.agents/skills",
 		"contrib/tidb/AGENTS.md",
+		"contrib/tidb-docs",
 	})
 
 	// Build tool registry
-	toolReg := tools.NewRegistry(
+	regTools := []tools.Tool{
 		tools.NewReadFileTool(sandbox),
 		tools.NewSearchCodeTool(sandbox, "contrib/tidb/pkg/planner"),
 		tools.NewListDirTool(sandbox),
 		tools.NewListSkillsTool(cfg.SkillsDir),
 		tools.NewReadSkillTool(cfg.SkillsDir),
-	)
+	}
+	if docsOverlay.Available {
+		regTools = append(regTools, tools.NewSearchDocsTool(cfg.ProjectRoot, cfg.TiDBDocsDir, docsOverlay))
+	}
+	toolReg := tools.NewRegistry(regTools...)
 
 	// Build agent
 	a := askplanner.New(askplanner.AgentConfig{
 		Provider:       provider,
 		ToolRegistry:   toolReg,
 		SkillIndex:     skillIdx,
+		DocsOverlay:    docsOverlay,
+		Debug:          cfg.AgentDebug,
 		Temperature:    cfg.Temperature,
 		MaxToolSteps:   cfg.MaxToolSteps,
 		MaxResultChars: cfg.MaxResultChars,
