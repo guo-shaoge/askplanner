@@ -2,23 +2,45 @@
 
 ## What This Is
 
-A terminal-based AI agent that answers TiDB query optimizer questions. It uses Kimi (Moonshot AI) as the LLM backend and reads engineer-written skills + TiDB planner source code on demand via tool calling.
+An AI agent that answers TiDB query optimizer questions. It uses Kimi (Moonshot AI) as the LLM backend and reads engineer-written skills + TiDB planner source code on demand via tool calling.
+
+There are two entrypoints:
+- `cmd/askplanner` — terminal REPL for local interactive use
+- `cmd/larkbot` — Feishu/Lark websocket bot that receives chat messages and replies with the same agent
 
 ## Build & Verify
 
 ```bash
 go build -o bin/askplanner ./cmd/askplanner   # build the CLI
+go build -o bin/larkbot ./cmd/larkbot         # build the Lark bot
 go vet ./...                                   # lint
-go build .                                     # build root-level Feishu bot (separate program)
 ```
 
 ## Architecture
 
 ### Single Package Design
 
-All logic lives in one package: `internal/askplanner/`. The `cmd/askplanner/main.go` is the only consumer — it wires everything together and runs the REPL.
+All shared logic lives in one package: `internal/askplanner/`. Both `cmd/askplanner/main.go` and `cmd/larkbot/main.go` consume it and only differ in transport wiring.
 
 There is no reason to split into multiple packages at this project's scale. If you add code, put it in `internal/askplanner/`.
+
+### cmd/larkbot Overview
+
+`cmd/larkbot/main.go` wraps the same `askplanner.Agent` used by the CLI in a Feishu/Lark websocket event loop.
+
+High-level flow:
+1. Read `FEISHU_APP_ID` and `FEISHU_APP_SECRET`
+2. Build the shared agent via `buildAgent()`
+3. Start a websocket client with `im.message.receive_v1` handler
+4. Extract incoming text message content
+5. Call `agent.Answer(...)`
+6. Reply to the original message with plain text
+
+Important behavior:
+- Empty incoming text falls back to `"Please introduce your capabilities."`
+- Tool calls are logged for debugging
+- Agent errors are returned to chat as `Agent Error: ...`
+- Sandbox, skills index, provider selection, and rate limiting are shared with the CLI path
 
 ### Key Types
 
@@ -63,7 +85,7 @@ The LLM uses `list_skills` and `read_skill` tools to read specific files on dema
 
 All file-reading tools go through `Sandbox.Resolve()` which validates paths against an allowlist. This prevents the LLM from reading API keys, `.git`, or anything outside designated directories.
 
-Allowed roots are configured in `cmd/askplanner/main.go`:
+Allowed roots are configured when each entrypoint builds the agent:
 - `contrib/agent-rules/skills/tidb-query-tuning/references/`
 - `contrib/tidb/pkg/planner/`, `statistics/`, `expression/`, `parser/`
 - `contrib/tidb/.agents/skills/`, `contrib/tidb/AGENTS.md`
@@ -88,11 +110,11 @@ Kimi free-tier returns 429 frequently. Two mitigations:
 
 ### Add a new tool
 1. Create a struct in `internal/askplanner/` implementing the `Tool` interface
-2. Register it in `cmd/askplanner/main.go` via `askplanner.NewRegistry(...)`
+2. Register it anywhere the shared agent is constructed (`cmd/askplanner/main.go`, `cmd/larkbot/main.go`) via `askplanner.NewRegistry(...)`
 
 ### Add a new LLM provider
 1. Implement `Provider` interface in a new file in `internal/askplanner/` (e.g. `openai.go`)
-2. Add a case in the `switch cfg.LLMProvider` block in `cmd/askplanner/main.go`
+2. Add a case in the `switch cfg.LLMProvider` block anywhere the shared agent is constructed (`cmd/askplanner/main.go`, `cmd/larkbot/main.go`)
 
 ### Add a new skill category
 1. Update `BuildIndex()` in skills.go to scan the new directory
@@ -108,22 +130,32 @@ All via environment variables. See README.md for the full table. Key ones:
 - `MAX_TOOL_STEPS` — default 50
 - `MAX_RESULT_CHARS` — default 12000 (truncation limit per tool result)
 
+Lark bot specific:
+- `FEISHU_APP_ID` (required)
+- `FEISHU_APP_SECRET` (required)
+
+Feishu app prerequisites for `cmd/larkbot`:
+- Enable websocket event subscription (Long Connection)
+- Subscribe to `im.message.receive_v1`
+- Grant scopes: `im:message`, `im:message:send_as_bot`
+
 ## Project Layout
 
 ```
 cmd/askplanner/main.go         Entry point: config, wiring, REPL
+cmd/larkbot/main.go            Entry point: Feishu/Lark websocket bot
 internal/askplanner/           All logic (single package)
-main.go + agent.go             Root-level Feishu bot (separate, independent program)
 contrib/agent-rules/           Skills repository (git submodule)
 contrib/tidb/                  TiDB source code
 keys/                          API key files (gitignored)
-llm/kimi/                      Kimi API documentation (reference only)
+llm_api/kimi/                  Kimi API documentation (reference only)
 ```
 
 ## Conventions
 
-- Go stdlib only — no external dependencies for the askplanner code (root Feishu bot uses Lark SDK)
+- `internal/askplanner` stays stdlib-only; `cmd/larkbot` is the place that pulls in the Lark SDK
 - Module path: `lab/askplanner`
 - All Kimi API wire types are private (lowercase) in kimi.go
 - Tool results are plain strings, truncated to `maxResultChars`
 - System prompt is built once at startup from the skill index
+- `cmd/larkbot` parses text message JSON payloads (`{"text":"..."}`) and replies with Feishu `text` messages

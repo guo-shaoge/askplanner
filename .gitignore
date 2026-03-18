@@ -1,2 +1,6 @@
 *.log
 bin/*
+keys/*
+!keys/.gitkeep
+contrib/*
+!contrib/.gitkeep

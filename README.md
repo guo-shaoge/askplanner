@@ -155,8 +155,10 @@ askplanner/
 │   └── tidb/                           # TiDB source code
 ├── keys/                               # API key files (gitignored)
 └── llm/kimi/                           # Kimi API documentation (reference)
-└── contrib                             # third-party repo, managed by git submodule
-└── SKILL.md                            # skill about this project, which can help AI to get onboard quickly
+├── Makefile
+├── prompt                              # the original prompt that I used to build this project
+├── README.md
+└── AGENTS.md                            # help AI to get onboard this project quickly.
 ```
 
 ## Adding a New LLM Provider
@@ -172,8 +174,9 @@ type Provider interface {
 
 Then wire it in `cmd/askplanner/main.go` under a new `LLM_PROVIDER` value.
 
-# Future
+# Roadmap
 1. support other LLM as backend
 2. support fetch url tool
 3. ~~integration with lark bot~~ ✓
-4. support generate SKILL itself using user questions
+4. generate SKILL automatically based on user questions
+5. 

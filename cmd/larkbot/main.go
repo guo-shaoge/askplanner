@@ -79,6 +79,7 @@ func main() {
 	}
 }
 
+// todo code duplicated with cmd/askplanner/main.go
 func buildAgent() (*askplanner.Agent, error) {
 	cfg, err := askplanner.Load()
 	if err != nil {
