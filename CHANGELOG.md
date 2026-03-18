@@ -494,3 +494,88 @@ Plan: Replace grep-based search_docs with keyword-based heading search
  5. Check system prompt size: log.Printf the total system prompt length at startup, verify it fits comfortably in the
  model's context window
 ```
+
+## more than 40 files in manifest
+```
+ Plan: Extend search_docs heading index to cover SQL statements
+
+ Context
+
+ The heading-based search_docs (already implemented) indexes only the 40 curated manifest docs. This is insufficient:
+ 1. Better answers: e.g., "how to reload binding" — the actual SQL syntax ADMIN RELOAD BINDINGS lives in
+ sql-statements/sql-statement-admin.md:77-101, not in the 40 curated docs.
+ 2. SQL validity verification: The LLM needs access to SQL statement reference docs to verify whether a suggested SQL
+ statement is valid TiDB syntax.
+
+ The contrib/tidb-docs/sql-statements/ directory contains 162 .md files (~18K lines total), each with consistent YAML
+ frontmatter (title, summary) and heading structure. These should be searchable via search_docs but NOT listed in the
+ system prompt (too many — would blow the prompt budget).
+
+ Approach
+
+ Extend BuildHeadingIndex to accept extra search directories beyond the manifest docs. Files from extra dirs are indexed
+  for heading search but don't appear in the system prompt outline.
+
+ - Manifest docs (40 files): indexed + shown in system prompt with ##-level outlines
+ - Extra dirs like sql-statements/ (162 files): indexed for search only, not in prompt
+ - System prompt gets a short note: "SQL statement reference docs are also searchable via search_docs."
+
+ Files to Change
+
+ internal/askplanner/tools/docsindex.go
+
+ 1. Change BuildHeadingIndex signature to accept extra dirs:
+ func BuildHeadingIndex(docs []DocEntry, docsDir string, extraDirs []string) *HeadingIndex
+ 2. Add helper indexDir — extract the per-file parsing loop (frontmatter + headings) into a reusable function:
+ func (idx *HeadingIndex) indexFile(docsDir, relPath, docTitle string, trackOutline bool)
+   - trackOutline=true for manifest docs (stores ##-level headings in idx.outlines)
+   - trackOutline=false for extra dir files (no outline needed)
+ 3. Scan extra dirs — after indexing manifest docs, for each dir in extraDirs:
+   - filepath.Glob(filepath.Join(docsDir, dir, "*.md")) to find all .md files
+   - For each file, derive DocTitle from YAML frontmatter title: field (strip  | TiDB SQL Statement Reference suffix)
+   - relPath = dir/filename.md (relative to docsDir)
+   - Call indexFile with trackOutline=false
+ 4. Update LoadDocsOverlay call site:
+ overlay.HeadingIndex = BuildHeadingIndex(docs, absDocsDir, []string{"sql-statements"})
+ 5. Update SystemPromptSection — add a note after the curated pages list:
+ SQL statement reference docs (`sql-statements/`) are also searchable via `search_docs`.
+
+ internal/askplanner/tools/searchdocs.go
+
+ No changes needed — it already uses overlay.HeadingIndex.Search() which will now include sql-statements entries. The
+ search output already shows DocPath which will naturally be sql-statements/sql-statement-admin.md.
+
+ internal/askplanner/tools/docsindex_test.go
+
+ - Add TestBuildHeadingIndexWithExtraDirs: create a temp sql-statements/ subdir with a sample doc, verify its headings
+ are indexed
+ - Add TestHeadingIndexSearchFindsExtraDirEntries: verify search finds headings from extra dir files
+ - Update existing TestBuildHeadingIndex call to pass nil for extraDirs
+
+ internal/askplanner/tools/searchdocs_test.go
+
+ - Add TestSearchDocsToolFindsSQLStatements: create overlay with extra dir, search for "ADMIN RELOAD BINDINGS", verify
+ it finds the sql-statement file
+
+ Example Walkthrough
+
+ User asks: "how to reload binding"
+
+ After (with sql-statements indexed):
+ 1. LLM calls search_docs(query="reload binding")
+ 2. Tool matches against ALL indexed headings (manifest + sql-statements):
+   - sql-statements/sql-statement-admin.md → "ADMIN BINDINGS related statement" heading (matches "binding")
+   - sql-plan-management.md → "Cache bindings" (matches "binding")
+   - sql-plan-management.md → "Create a binding" (matches "binding")
+   - sql-statements/sql-statement-create-binding.md → title match (matches "binding")
+ 3. LLM reads the relevant sections and finds ADMIN RELOAD BINDINGS syntax
+
+ Verification
+
+ 1. go test ./internal/askplanner/tools/... — all tests pass including new extra-dir tests
+ 2. Build: go build ./... succeeds
+ 3. Manual test: ask "how to reload binding" → should find both sql-plan-management.md AND sql-statement-admin.md
+ 4. Manual test: ask "CREATE INDEX syntax" → should find sql-statements/sql-statement-create-index.md
+ 5. Manual test: ask "EXPLAIN ANALYZE" → should find both curated explain-overview.md AND
+ sql-statements/sql-statement-explain-analyze.md
+```

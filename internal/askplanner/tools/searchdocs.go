@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -15,7 +12,8 @@ const (
 	maxDocSearchLimit     = 20
 )
 
-// SearchDocsTool searches curated official TiDB docs pages.
+// SearchDocsTool searches curated official TiDB docs by keyword matching
+// against document headings, titles, and summaries.
 type SearchDocsTool struct {
 	projectRoot string
 	docsDir     string
@@ -33,21 +31,21 @@ func NewSearchDocsTool(projectRoot, docsDir string, overlay *DocsOverlay) *Searc
 func (t *SearchDocsTool) Name() string { return "search_docs" }
 
 func (t *SearchDocsTool) Description() string {
-	return "Search curated official TiDB documentation for SQL tuning features, syntax, optimizer hints, variables, and best practices. Use this before read_file when you need the right official docs page."
+	return "Search official TiDB SQL tuning docs by keywords. Matches doc titles, summaries, and section headings. Returns matching sections with file paths and line numbers for use with read_file."
 }
 
 func (t *SearchDocsTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":     "object",
-		"required": []string{"pattern"},
+		"required": []string{"query"},
 		"properties": map[string]any{
-			"pattern": map[string]any{
+			"query": map[string]any{
 				"type":        "string",
-				"description": "Search pattern (basic regex supported)",
+				"description": "Keywords or topic to search for in official docs headings and titles (e.g. 'reload binding', 'statistics health', 'hash join hint')",
 			},
 			"limit": map[string]any{
 				"type":        "integer",
-				"description": "Maximum number of matching lines to return. Default: 10, maximum: 20.",
+				"description": "Maximum number of results. Default: 10, maximum: 20.",
 			},
 		},
 	}
@@ -59,14 +57,14 @@ func (t *SearchDocsTool) Execute(ctx context.Context, argsJSON string) (string, 
 	}
 
 	var args struct {
-		Pattern string `json:"pattern"`
-		Limit   int    `json:"limit"`
+		Query string `json:"query"`
+		Limit int    `json:"limit"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
-	if strings.TrimSpace(args.Pattern) == "" {
-		return "", fmt.Errorf("pattern is required")
+	if strings.TrimSpace(args.Query) == "" {
+		return "", fmt.Errorf("query is required")
 	}
 
 	limit := args.Limit
@@ -77,90 +75,46 @@ func (t *SearchDocsTool) Execute(ctx context.Context, argsJSON string) (string, 
 		limit = maxDocSearchLimit
 	}
 
-	files := make([]string, 0, len(t.overlay.Docs))
-	titleByPath := make(map[string]string, len(t.overlay.Docs))
-	for _, doc := range t.overlay.Docs {
-		abs := filepath.Join(t.docsDir, doc.Path)
-		files = append(files, abs)
-		titleByPath[abs] = doc.Title
-	}
-
-	output, err := runScopedSearch(ctx, args.Pattern, files)
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(string(output)) == "" {
+	matches := t.overlay.HeadingIndex.Search(args.Query, limit)
+	if len(matches) == 0 {
 		return "No matches found.", nil
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) > limit {
-		lines = lines[:limit]
+	// Group results by doc for cleaner output.
+	type docGroup struct {
+		title   string
+		path    string
+		entries []HeadingMatch
+	}
+	var groups []docGroup
+	groupIdx := make(map[string]int) // path -> index in groups
+
+	for _, m := range matches {
+		if idx, ok := groupIdx[m.DocPath]; ok {
+			groups[idx].entries = append(groups[idx].entries, m)
+		} else {
+			groupIdx[m.DocPath] = len(groups)
+			groups = append(groups, docGroup{
+				title:   m.DocTitle,
+				path:    m.DocPath,
+				entries: []HeadingMatch{m},
+			})
+		}
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Official docs search: %q (%d results)\n", args.Pattern, len(lines))
-	for _, line := range lines {
-		path, lineNo, text, ok := parseSearchLine(line)
-		if !ok {
-			continue
+	fmt.Fprintf(&sb, "Docs search: %q (%d results)\n\n", args.Query, len(matches))
+	for i, g := range groups {
+		fmt.Fprintf(&sb, "%d. %s [%s]\n", i+1, g.title, g.path)
+		for _, e := range g.entries {
+			levelMark := strings.Repeat("#", e.Level)
+			if e.Level == 0 {
+				levelMark = "title"
+			}
+			fmt.Fprintf(&sb, "   - L%d: %s (%s)\n", e.Line, e.Heading, levelMark)
 		}
-
-		title := titleByPath[path]
-		relPath, err := filepath.Rel(t.projectRoot, path)
-		if err != nil {
-			relPath = path
-		}
-
-		fmt.Fprintf(&sb, "- %s [%s:%d] %s\n", title, relPath, lineNo, strings.TrimSpace(text))
 	}
-	if len(lines) == limit {
-		sb.WriteString("... (results truncated)\n")
-	}
+	sb.WriteString("\nUse read_file(path=\"contrib/tidb-docs/<path>\", offset=<line>) to read the section.\n")
 
 	return sb.String(), nil
-}
-
-func runScopedSearch(ctx context.Context, pattern string, files []string) ([]byte, error) {
-	if rgPath, err := exec.LookPath("rg"); err == nil {
-		args := []string{"-n", "--no-heading", pattern}
-		args = append(args, files...)
-		cmd := exec.CommandContext(ctx, rgPath, args...)
-		output, err := cmd.Output()
-		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-				return nil, nil
-			}
-			if len(output) == 0 {
-				return nil, fmt.Errorf("search docs failed: %w", err)
-			}
-		}
-		return output, nil
-	}
-
-	args := []string{"-nH", pattern}
-	args = append(args, files...)
-	cmd := exec.CommandContext(ctx, "grep", args...)
-	output, err := cmd.Output()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return nil, nil
-		}
-		if len(output) == 0 {
-			return nil, fmt.Errorf("search docs failed: %w", err)
-		}
-	}
-	return output, nil
-}
-
-func parseSearchLine(line string) (string, int, string, bool) {
-	parts := strings.SplitN(line, ":", 3)
-	if len(parts) != 3 {
-		return "", 0, "", false
-	}
-	lineNo, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return "", 0, "", false
-	}
-	return parts[0], lineNo, parts[2], true
 }
