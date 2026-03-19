@@ -1,6 +1,8 @@
 package lark
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -127,7 +129,9 @@ func sanitizePathComponent(component string) string {
 }
 
 func publicReferenceID(conversationKey, messageID, leaf string) string {
-	return strings.TrimSpace(conversationKey) + "/" + strings.TrimSpace(messageID) + "/" + strings.TrimSpace(leaf)
+	raw := strings.TrimSpace(conversationKey) + "/" + strings.TrimSpace(messageID) + "/" + strings.TrimSpace(leaf)
+	sum := sha256.Sum256([]byte(raw))
+	return "bundle-" + hex.EncodeToString(sum[:4])
 }
 
 func (s *BundleStore) Resolve(publicID string) (*ResolvedReference, error) {
@@ -135,58 +139,47 @@ func (s *BundleStore) Resolve(publicID string) (*ResolvedReference, error) {
 	if publicID == "" {
 		return nil, fmt.Errorf("public id is required")
 	}
-	dir, err := publicIDToPath(s.Root, publicID)
+	convEntries, err := os.ReadDir(s.Root)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read bundle root: %w", err)
 	}
-	leaf := filepath.Base(dir)
-	if leaf != "raw" && leaf != "extracted" {
-		return nil, fmt.Errorf("unsupported public id leaf: %s", publicID)
-	}
-	metaPath := filepath.Join(filepath.Dir(dir), "meta.json")
-	data, err := os.ReadFile(metaPath)
-	if err != nil {
-		return nil, fmt.Errorf("read bundle metadata for %s: %w", publicID, err)
-	}
-	var meta BundleMetadata
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return nil, fmt.Errorf("parse bundle metadata for %s: %w", publicID, err)
-	}
-	expected := meta.RawPublicID
-	if leaf == "extracted" {
-		expected = meta.ExtractedPublicID
-	}
-	if expected != publicID {
-		return nil, fmt.Errorf("public id does not match bundle metadata: %s", publicID)
-	}
-	return &ResolvedReference{
-		PublicID: publicID,
-		Dir:      dir,
-		MetaPath: metaPath,
-		Meta:     meta,
-	}, nil
-}
-
-func publicIDToPath(root, publicID string) (string, error) {
-	parts := strings.Split(publicID, "/")
-	if len(parts) < 3 {
-		return "", fmt.Errorf("invalid public id: %s", publicID)
-	}
-	for _, part := range parts {
-		if part == "" || part == "." || part == ".." {
-			return "", fmt.Errorf("invalid public id path segment: %s", publicID)
+	for _, convEntry := range convEntries {
+		if !convEntry.IsDir() {
+			continue
 		}
-		if sanitizePathComponent(part) != part {
-			return "", fmt.Errorf("unsafe public id path segment: %s", publicID)
+		convDir := filepath.Join(s.Root, convEntry.Name())
+		msgEntries, err := os.ReadDir(convDir)
+		if err != nil {
+			continue
+		}
+		for _, msgEntry := range msgEntries {
+			if !msgEntry.IsDir() {
+				continue
+			}
+			metaPath := filepath.Join(convDir, msgEntry.Name(), "meta.json")
+			data, err := os.ReadFile(metaPath)
+			if err != nil {
+				continue
+			}
+			var meta BundleMetadata
+			if err := json.Unmarshal(data, &meta); err != nil {
+				continue
+			}
+			var dir string
+			if meta.RawPublicID == publicID {
+				dir = filepath.Join(convDir, msgEntry.Name(), "raw")
+			} else if meta.ExtractedPublicID == publicID {
+				dir = filepath.Join(convDir, msgEntry.Name(), "extracted")
+			} else {
+				continue
+			}
+			return &ResolvedReference{
+				PublicID: publicID,
+				Dir:      dir,
+				MetaPath: metaPath,
+				Meta:     meta,
+			}, nil
 		}
 	}
-	joined := filepath.Join(append([]string{root}, parts...)...)
-	rel, err := filepath.Rel(filepath.Clean(root), joined)
-	if err != nil {
-		return "", fmt.Errorf("resolve public id %s: %w", publicID, err)
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("public id escapes bundle root: %s", publicID)
-	}
-	return joined, nil
+	return nil, fmt.Errorf("public id not found: %s", publicID)
 }

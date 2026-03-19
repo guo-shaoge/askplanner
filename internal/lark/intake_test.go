@@ -14,13 +14,13 @@ import (
 func TestDefaultUploadUserMessageForAttachmentOnlyRequestsAcknowledgement(t *testing.T) {
 	got := defaultUploadUserMessage([]codex.Attachment{{
 		Kind:     "plan_replayer_zip",
-		PublicID: "lark:thread:oc_123/om_789/extracted",
+		PublicID: "bundle-abcd1234",
 	}})
 	for _, want := range []string{
 		"can see the file or files",
 		"must include the ID",
 		"Do not analyze the files yet",
-		"lark:thread:oc_123/om_789/extracted",
+		"bundle-abcd1234",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected synthesized message to contain %q, got %q", want, got)
@@ -29,7 +29,7 @@ func TestDefaultUploadUserMessageForAttachmentOnlyRequestsAcknowledgement(t *tes
 }
 
 func TestExtractReferencedPublicIDs(t *testing.T) {
-	got := extractReferencedPublicIDs("lark:thread:oc_123", "please analyze lark:thread:oc_123/om_789/extracted and lark:thread:oc_123/om_456/raw")
+	got := extractReferencedPublicIDs("please analyze bundle-abcd1234 and bundle-ef567890")
 	if len(got) != 2 {
 		t.Fatalf("expected 2 ids, got %d", len(got))
 	}
@@ -53,14 +53,14 @@ func TestBuildTextRequestWithReferences(t *testing.T) {
 	}
 
 	intake := &Intake{Store: store}
-	req, err := intake.buildTextRequestWithReferences("lark:thread:oc_123", "please analyze lark:thread:oc_123/om_789/extracted")
+	req, err := intake.buildTextRequestWithReferences("please analyze " + bundle.ExtractedPublicID)
 	if err != nil {
 		t.Fatalf("buildTextRequestWithReferences: %v", err)
 	}
 	if len(req.Attachments) != 1 {
 		t.Fatalf("expected one resolved attachment, got %d", len(req.Attachments))
 	}
-	if req.Attachments[0].PublicID != "lark:thread:oc_123/om_789/extracted" {
+	if req.Attachments[0].PublicID != bundle.ExtractedPublicID {
 		t.Fatalf("unexpected public id: %q", req.Attachments[0].PublicID)
 	}
 }
@@ -117,15 +117,17 @@ func TestBuildRequestForAttachmentUploadUsesPublicIDPrompt(t *testing.T) {
 		},
 	}
 
-	intake := NewIntake(fakeMessageResourceClient{resp: fakeZipResourceResponse()}, t.TempDir(), time.Hour, 1024)
+	root := t.TempDir()
+	intake := NewIntake(fakeMessageResourceClient{resp: fakeZipResourceResponse()}, root, time.Hour, 1024)
 	req, err := intake.BuildRequest(t.Context(), "lark:thread:oc_123", event)
 	if err != nil {
 		t.Fatalf("BuildRequest returned error: %v", err)
 	}
-	if !strings.Contains(req.UserMessage, "lark:thread:oc_123/om_789/extracted") {
-		t.Fatalf("expected upload prompt to contain public id, got %q", req.UserMessage)
+	expectedID := publicReferenceID("lark:thread:oc_123", "om_789", "extracted")
+	if !strings.Contains(req.UserMessage, expectedID) {
+		t.Fatalf("expected upload prompt to contain public id %q, got %q", expectedID, req.UserMessage)
 	}
-	if len(req.Attachments) != 1 || req.Attachments[0].PublicID != "lark:thread:oc_123/om_789/extracted" {
+	if len(req.Attachments) != 1 || req.Attachments[0].PublicID != expectedID {
 		t.Fatalf("unexpected attachments: %+v", req.Attachments)
 	}
 }

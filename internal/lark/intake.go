@@ -30,7 +30,7 @@ type Intake struct {
 	TTL     time.Duration
 }
 
-var publicIDPattern = regexp.MustCompile(`lark:[^\s]+/om_[^\s/]+/(?:raw|extracted)`)
+var publicIDPattern = regexp.MustCompile(`bundle-[a-f0-9]{8}`)
 
 func NewIntake(client MessageResourceClient, root string, ttl time.Duration, maxBytes int64) *Intake {
 	return &Intake{
@@ -57,7 +57,7 @@ func (i *Intake) BuildRequest(ctx context.Context, conversationKey string, event
 			if strings.TrimSpace(parsed.UserText) == "" {
 				return codex.Request{}, &UserVisibleError{Message: "The message is empty. Images and PLAN REPLAYER .zip files should be sent through Lark by themselves. After the upload reply returns an ID, send a follow-up text question that includes that ID."}
 			}
-			return i.buildTextRequestWithReferences(conversationKey, parsed.UserText)
+			return i.buildTextRequestWithReferences(parsed.UserText)
 		default:
 			return codex.Request{}, &UserVisibleError{Message: "This Lark message type is not supported yet. Please send text, a PLAN REPLAYER .zip file, or an image."}
 		}
@@ -141,9 +141,9 @@ func (i *Intake) BuildRequest(ctx context.Context, conversationKey string, event
 	return request, nil
 }
 
-func (i *Intake) buildTextRequestWithReferences(conversationKey, userText string) (codex.Request, error) {
+func (i *Intake) buildTextRequestWithReferences(userText string) (codex.Request, error) {
 	request := codex.NewTextRequest(userText)
-	publicIDs := extractReferencedPublicIDs(conversationKey, userText)
+	publicIDs := extractReferencedPublicIDs(userText)
 	if len(publicIDs) == 0 {
 		return request, nil
 	}
@@ -195,19 +195,15 @@ func defaultUploadUserMessage(attachments []codex.Attachment) string {
 	return strings.TrimSpace(sb.String())
 }
 
-func extractReferencedPublicIDs(conversationKey, userText string) []string {
+func extractReferencedPublicIDs(userText string) []string {
 	matches := publicIDPattern.FindAllString(userText, -1)
 	if len(matches) == 0 {
 		return nil
 	}
 	seen := make(map[string]struct{}, len(matches))
 	out := make([]string, 0, len(matches))
-	prefix := strings.TrimSpace(conversationKey) + "/"
 	for _, match := range matches {
 		match = strings.TrimSpace(match)
-		if !strings.HasPrefix(match, prefix) {
-			continue
-		}
 		if _, ok := seen[match]; ok {
 			continue
 		}
