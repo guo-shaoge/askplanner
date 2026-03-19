@@ -39,7 +39,7 @@ func (r *Runner) RunNew(ctx context.Context, prompt string) (*RunResult, error) 
 	if strings.TrimSpace(r.ReasoningEffort) != "" {
 		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", r.ReasoningEffort))
 	}
-	return r.run(ctx, args, nil, prompt)
+	return r.run(ctx, args, nil, prompt, true)
 }
 
 func (r *Runner) RunResume(ctx context.Context, sessionID, prompt string) (*RunResult, error) {
@@ -54,10 +54,10 @@ func (r *Runner) RunResume(ctx context.Context, sessionID, prompt string) (*RunR
 	if strings.TrimSpace(r.ReasoningEffort) != "" {
 		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", r.ReasoningEffort))
 	}
-	return r.run(ctx, args, []string{sessionID}, prompt)
+	return r.run(ctx, args, []string{sessionID}, prompt, false)
 }
 
-func (r *Runner) run(ctx context.Context, optionArgs, positionalArgs []string, prompt string) (*RunResult, error) {
+func (r *Runner) run(ctx context.Context, optionArgs, positionalArgs []string, prompt string, skipLogPrompt bool) (*RunResult, error) {
 	replyFile, err := os.CreateTemp("", "askplanner-codex-reply-*.txt")
 	if err != nil {
 		return nil, fmt.Errorf("create temp reply file: %w", err)
@@ -74,7 +74,11 @@ func (r *Runner) run(ctx context.Context, optionArgs, positionalArgs []string, p
 	args = append(args, positionalArgs...)
 	args = append(args, "-")
 
-	log.Printf("[codex] running: %s %s", r.Bin, strings.Join(args, " "))
+	if !skipLogPrompt {
+		log.Printf("[codex] running: %s %s, prompt: %s", r.Bin, strings.Join(args, " "), compactText(prompt, 1000))
+	} else {
+		log.Printf("[codex] running: %s %s, prompt: (omitted)", r.Bin, strings.Join(args, " "))
+	}
 
 	cmd := exec.CommandContext(ctx, r.Bin, args...)
 	cmd.Dir = r.WorkDir
