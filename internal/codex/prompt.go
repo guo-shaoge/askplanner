@@ -25,12 +25,18 @@ func PromptHash(prompt string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func BuildInitialPrompt(normalizedPrompt, summary, question string) string {
+func BuildInitialPrompt(normalizedPrompt, summary, question, attachmentDir string) string {
 	var sb strings.Builder
 	sb.WriteString(strings.TrimSpace(normalizedPrompt))
 	sb.WriteString("\n\n## Runtime Context\n")
 	sb.WriteString("- You are serving a TiDB query tuning chat relay backed by Codex CLI.\n")
 	sb.WriteString("- Answer the user's latest message directly.\n")
+	if strings.TrimSpace(attachmentDir) != "" {
+		sb.WriteString("- Uploaded Lark attachments, if any, are stored under: ")
+		sb.WriteString(strings.TrimSpace(attachmentDir))
+		sb.WriteString("\n")
+		sb.WriteString("- If the user refers to an uploaded file, PLAN REPLAYER zip, or previous attachment, inspect this directory and recent subdirectories before asking the user to upload again.\n")
+	}
 	if strings.TrimSpace(summary) != "" {
 		sb.WriteString("\n## Conversation Summary\n")
 		sb.WriteString(strings.TrimSpace(summary))
@@ -42,9 +48,18 @@ func BuildInitialPrompt(normalizedPrompt, summary, question string) string {
 	return sb.String()
 }
 
-func BuildResumePrompt(question string) string {
-	return fmt.Sprintf(
-		"Continue the existing TiDB query tuning conversation.\n\nNew user message:\n%s\n",
-		strings.TrimSpace(question),
-	)
+func BuildResumePrompt(question, attachmentDir string) string {
+	var sb strings.Builder
+	sb.WriteString("Continue the existing TiDB query tuning conversation.\n")
+	if strings.TrimSpace(attachmentDir) != "" {
+		sb.WriteString("\nRuntime note:\n")
+		sb.WriteString("- Uploaded Lark attachments, if any, are stored under: ")
+		sb.WriteString(strings.TrimSpace(attachmentDir))
+		sb.WriteString("\n")
+		sb.WriteString("- If the user refers to a prior uploaded file, PLAN REPLAYER zip, or attachment, inspect this directory and recent subdirectories before asking the user to upload again.\n")
+	}
+	sb.WriteString("\nNew user message:\n")
+	sb.WriteString(strings.TrimSpace(question))
+	sb.WriteByte('\n')
+	return sb.String()
 }

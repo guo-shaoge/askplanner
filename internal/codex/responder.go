@@ -15,6 +15,7 @@ type Responder struct {
 	store      *FileSessionStore
 	prompt     string
 	promptHash string
+	attachDir  string
 	maxTurns   int
 	sessionTTL time.Duration
 	timeout    time.Duration
@@ -42,6 +43,7 @@ func NewResponder(cfg *config.Config) (*Responder, error) {
 		store:      store,
 		prompt:     prompt,
 		promptHash: PromptHash(prompt),
+		attachDir:  strings.TrimSpace(cfg.FeishuFileDir),
 		maxTurns:   cfg.CodexMaxTurns,
 		sessionTTL: time.Duration(cfg.CodexSessionTTLHours) * time.Hour,
 		timeout:    time.Duration(cfg.CodexTimeoutSec) * time.Second,
@@ -59,7 +61,7 @@ func (r *Responder) Answer(ctx context.Context, conversationKey, question string
 	record, ok := r.store.Get(conversationKey)
 
 	if ok && r.canResume(record, now) {
-		result, err := r.runner.RunResume(ctx, record.SessionID, BuildResumePrompt(question))
+		result, err := r.runner.RunResume(ctx, record.SessionID, BuildResumePrompt(question, r.attachDir))
 		if err == nil {
 			record.LastActiveAt = now
 			record.TurnCount++
@@ -77,7 +79,7 @@ func (r *Responder) Answer(ctx context.Context, conversationKey, question string
 		log.Printf("[codex] resume failed for %s, starting a new session: %v", conversationKey, err)
 	}
 
-	initialPrompt := BuildInitialPrompt(r.prompt, summarizeTurns(record.Turns), question)
+	initialPrompt := BuildInitialPrompt(r.prompt, summarizeTurns(record.Turns), question, r.attachDir)
 	result, err := r.runner.RunNew(ctx, initialPrompt)
 	if err != nil {
 		return "", err
