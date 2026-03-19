@@ -11,6 +11,7 @@ func TestBuildInitialPromptIncludesAttachmentContext(t *testing.T) {
 		RuntimeNotes: []string{"Attachment bundle directory: .askplanner/lark:thread:oc_1/om_1"},
 		Attachments: []Attachment{{
 			Kind:         "plan_replayer_zip",
+			PublicID:     "lark:thread:oc_1/om_1/extracted",
 			OriginalName: "trace.zip",
 			SavedPath:    ".askplanner/lark:thread:oc_1/om_1/raw/trace.zip",
 			ExtractedDir: ".askplanner/lark:thread:oc_1/om_1/extracted/trace",
@@ -20,6 +21,7 @@ func TestBuildInitialPromptIncludesAttachmentContext(t *testing.T) {
 	prompt := BuildInitialPrompt("base prompt", "", req)
 	for _, needle := range []string{
 		"## Message Context",
+		"public_id=lark:thread:oc_1/om_1/extracted",
 		"trace.zip",
 		".askplanner/lark:thread:oc_1/om_1/raw/trace.zip",
 		".askplanner/lark:thread:oc_1/om_1/extracted/trace",

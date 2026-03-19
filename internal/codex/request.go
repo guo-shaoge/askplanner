@@ -7,6 +7,7 @@ import (
 
 type Attachment struct {
 	Kind         string
+	PublicID     string
 	OriginalName string
 	SavedPath    string
 	ExtractedDir string
@@ -53,6 +54,9 @@ func (r Request) HistoryText() string {
 		sb.WriteString("Attachments:\n")
 		for _, attachment := range r.Attachments {
 			line := fmt.Sprintf("- %s", strings.TrimSpace(attachment.Kind))
+			if publicID := strings.TrimSpace(attachment.PublicID); publicID != "" {
+				line += fmt.Sprintf(" [id: %s]", publicID)
+			}
 			if name := strings.TrimSpace(attachment.OriginalName); name != "" {
 				line += fmt.Sprintf(": %s", name)
 			}

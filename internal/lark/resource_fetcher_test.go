@@ -1,6 +1,7 @@
 package lark
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"path/filepath"
@@ -17,6 +18,19 @@ type fakeMessageResourceClient struct {
 
 func (f fakeMessageResourceClient) Get(ctx context.Context, req *larkim.GetMessageResourceReq, options ...larkcore.RequestOptionFunc) (*larkim.GetMessageResourceResp, error) {
 	return f.resp, nil
+}
+
+func fakeZipResourceResponse() *larkim.GetMessageResourceResp {
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	file, _ := writer.Create("sql_meta.toml")
+	_, _ = file.Write([]byte("trace"))
+	_ = writer.Close()
+	return &larkim.GetMessageResourceResp{
+		CodeError: larkcore.CodeError{Code: 0},
+		File:      bytes.NewReader(buf.Bytes()),
+		FileName:  "trace.zip",
+	}
 }
 
 func TestResourceFetcherStoresFileInTargetDir(t *testing.T) {

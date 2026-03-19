@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,6 +29,8 @@ type Intake struct {
 	Fetcher *ResourceFetcher
 	TTL     time.Duration
 }
+
+var publicIDPattern = regexp.MustCompile(`lark:[^\s]+/om_[^\s/]+/(?:raw|extracted)`)
 
 func NewIntake(client MessageResourceClient, root string, ttl time.Duration, maxBytes int64) *Intake {
 	return &Intake{
@@ -51,9 +55,9 @@ func (i *Intake) BuildRequest(ctx context.Context, conversationKey string, event
 		switch parsed.MessageType {
 		case "text", "post":
 			if strings.TrimSpace(parsed.UserText) == "" {
-				return codex.Request{}, &UserVisibleError{Message: "The message is empty. Please send text, a PLAN REPLAYER .zip file, or an image."}
+				return codex.Request{}, &UserVisibleError{Message: "The message is empty. Images and PLAN REPLAYER .zip files should be sent through Lark by themselves. After the upload reply returns an ID, send a follow-up text question that includes that ID."}
 			}
-			return codex.NewTextRequest(parsed.UserText), nil
+			return i.buildTextRequestWithReferences(conversationKey, parsed.UserText)
 		default:
 			return codex.Request{}, &UserVisibleError{Message: "This Lark message type is not supported yet. Please send text, a PLAN REPLAYER .zip file, or an image."}
 		}
@@ -71,7 +75,6 @@ func (i *Intake) BuildRequest(ctx context.Context, conversationKey string, event
 	}()
 
 	request := codex.Request{
-		UserMessage: defaultUserMessage(parsed.UserText, parsed.Attachments),
 		RuntimeNotes: []string{
 			fmt.Sprintf("Lark conversation key: %s", strings.TrimSpace(conversationKey)),
 			fmt.Sprintf("Lark message ID: %s", strings.TrimSpace(parsed.MessageID)),
@@ -99,7 +102,9 @@ func (i *Intake) BuildRequest(ctx context.Context, conversationKey string, event
 
 		switch ref.Kind {
 		case AttachmentKindImage:
+			attachment.PublicID = bundle.RawPublicID
 			attachment.Notes = append(attachment.Notes, "Image downloaded from the Lark message resource API.")
+			attachmentMeta.PublicID = bundle.RawPublicID
 		case AttachmentKindFile:
 			if !strings.EqualFold(filepath.Ext(saved.OriginalName), ".zip") {
 				return codex.Request{}, &UserVisibleError{Message: "Only PLAN REPLAYER .zip files and images are supported right now."}
@@ -110,13 +115,15 @@ func (i *Intake) BuildRequest(ctx context.Context, conversationKey string, event
 				return codex.Request{}, err
 			}
 			attachment.Kind = "plan_replayer_zip"
+			attachment.PublicID = bundle.ExtractedPublicID
 			attachment.ExtractedDir = extractedDir
 			attachment.Notes = append(attachment.Notes, "PLAN REPLAYER ZIP extracted for Codex inspection.")
+			attachment.Notes = append(attachment.Notes, "Use the public ID in any user-facing reply. The public ID maps to the extracted bundle root, not the hidden .askplanner path.")
 			if len(manifest.DetectedFiles) > 0 {
-				// todo delte this, codex should know how to read the extracted dir and find these files by itself, no need to tell it what we found, just give it the extracted dir and let it figure out what to do with it
-				// attachment.Notes = append(attachment.Notes, "Detected PLAN REPLAYER files: "+strings.Join(manifest.DetectedFiles, ", "))
+				attachment.Notes = append(attachment.Notes, "Detected PLAN REPLAYER files: "+strings.Join(manifest.DetectedFiles, ", "))
 			}
 			attachmentMeta.Kind = attachment.Kind
+			attachmentMeta.PublicID = bundle.ExtractedPublicID
 			attachmentMeta.ExtractedDir = extractedDir
 			attachmentMeta.Notes = append(attachmentMeta.Notes, attachment.Notes...)
 		default:
@@ -128,20 +135,86 @@ func (i *Intake) BuildRequest(ctx context.Context, conversationKey string, event
 		}
 		request.Attachments = append(request.Attachments, attachment)
 	}
+	request.UserMessage = defaultUploadUserMessage(request.Attachments)
 
 	cleanupBundle = false
 	return request, nil
 }
 
-func defaultUserMessage(userText string, attachments []AttachmentRef) string {
-	userText = strings.TrimSpace(userText)
-	if userText != "" {
-		return userText
+func (i *Intake) buildTextRequestWithReferences(conversationKey, userText string) (codex.Request, error) {
+	request := codex.NewTextRequest(userText)
+	publicIDs := extractReferencedPublicIDs(conversationKey, userText)
+	if len(publicIDs) == 0 {
+		return request, nil
 	}
+
+	sort.Strings(publicIDs)
+	for _, publicID := range publicIDs {
+		resolved, err := i.Store.Resolve(publicID)
+		if err != nil {
+			return codex.Request{}, &UserVisibleError{Message: fmt.Sprintf("The attachment ID %q is invalid or expired. Please upload the image or PLAN REPLAYER .zip file again through Lark and use the new returned ID.", publicID)}
+		}
+		request.RuntimeNotes = append(request.RuntimeNotes,
+			fmt.Sprintf("Resolved attachment ID: %s", publicID),
+			fmt.Sprintf("Resolved internal attachment path: %s", resolved.Dir),
+		)
+		for _, meta := range resolved.Meta.Attachments {
+			publicIDForAttachment := strings.TrimSpace(meta.PublicID)
+			if publicIDForAttachment == "" {
+				publicIDForAttachment = publicID
+			}
+			request.Attachments = append(request.Attachments, codex.Attachment{
+				Kind:         strings.TrimSpace(meta.Kind),
+				PublicID:     publicIDForAttachment,
+				OriginalName: strings.TrimSpace(meta.OriginalName),
+				SavedPath:    strings.TrimSpace(meta.SavedPath),
+				ExtractedDir: strings.TrimSpace(meta.ExtractedDir),
+				Notes: append([]string{
+					"Attachment was resolved from the user-provided public ID. Use the public ID in any user-facing reply.",
+				}, meta.Notes...),
+			})
+		}
+	}
+	return request, nil
+}
+
+func defaultUploadUserMessage(attachments []codex.Attachment) string {
 	if len(attachments) == 0 {
 		return ""
 	}
-	return "I attached files without a question. Please reply briefly that you can see the attached file or files, and ask me to send a more specific question that uses them. Do not analyze the files yet."
+	var sb strings.Builder
+	sb.WriteString("The user uploaded image or PLAN REPLAYER ZIP files through Lark without a follow-up question.\n")
+	sb.WriteString("Reply briefly that you can see the file or files, return the public ID for each one exactly as shown below, and tell the user that every later message that needs those files must include the ID.\n")
+	sb.WriteString("Also tell the user that images and PLAN REPLAYER ZIP files should only be sent through Lark, and later text questions should reference the returned ID. Do not analyze the files yet.\n")
+	sb.WriteString("Public IDs:\n")
+	for _, attachment := range attachments {
+		if publicID := strings.TrimSpace(attachment.PublicID); publicID != "" {
+			fmt.Fprintf(&sb, "- %s (%s)\n", publicID, strings.TrimSpace(attachment.Kind))
+		}
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func extractReferencedPublicIDs(conversationKey, userText string) []string {
+	matches := publicIDPattern.FindAllString(userText, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(matches))
+	out := make([]string, 0, len(matches))
+	prefix := strings.TrimSpace(conversationKey) + "/"
+	for _, match := range matches {
+		match = strings.TrimSpace(match)
+		if !strings.HasPrefix(match, prefix) {
+			continue
+		}
+		if _, ok := seen[match]; ok {
+			continue
+		}
+		seen[match] = struct{}{}
+		out = append(out, match)
+	}
+	return out
 }
 
 func AsUserVisibleError(err error) (*UserVisibleError, bool) {
