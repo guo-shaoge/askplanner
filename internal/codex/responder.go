@@ -48,7 +48,7 @@ func NewResponder(cfg *config.Config) (*Responder, error) {
 	}, nil
 }
 
-func (r *Responder) Answer(ctx context.Context, conversationKey, question string) (string, error) {
+func (r *Responder) Answer(ctx context.Context, conversationKey string, request Request) (string, error) {
 	if r.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, r.timeout)
@@ -57,14 +57,15 @@ func (r *Responder) Answer(ctx context.Context, conversationKey, question string
 
 	now := time.Now().UTC()
 	record, ok := r.store.Get(conversationKey)
+	historyText := request.HistoryText()
 
 	if ok && r.canResume(record, now) {
-		result, err := r.runner.RunResume(ctx, record.SessionID, BuildResumePrompt(question))
+		result, err := r.runner.RunResume(ctx, record.SessionID, BuildResumePrompt(request))
 		if err == nil {
 			record.LastActiveAt = now
 			record.TurnCount++
 			record.LastError = ""
-			record.appendTurn(question, result.Answer)
+			record.appendTurn(historyText, result.Answer)
 			if err := r.store.Put(record); err != nil {
 				return "", err
 			}
@@ -77,7 +78,7 @@ func (r *Responder) Answer(ctx context.Context, conversationKey, question string
 		log.Printf("[codex] resume failed for %s, starting a new session: %v", conversationKey, err)
 	}
 
-	initialPrompt := BuildInitialPrompt(r.prompt, summarizeTurns(record.Turns), question)
+	initialPrompt := BuildInitialPrompt(r.prompt, summarizeTurns(record.Turns), request)
 	result, err := r.runner.RunNew(ctx, initialPrompt)
 	if err != nil {
 		return "", err
@@ -95,7 +96,7 @@ func (r *Responder) Answer(ctx context.Context, conversationKey, question string
 		LastActiveAt:    now,
 		TurnCount:       1,
 		Turns: []Turn{{
-			User:      strings.TrimSpace(question),
+			User:      strings.TrimSpace(historyText),
 			Assistant: strings.TrimSpace(result.Answer),
 			At:        now,
 		}},

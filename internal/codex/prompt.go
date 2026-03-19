@@ -25,7 +25,7 @@ func PromptHash(prompt string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func BuildInitialPrompt(normalizedPrompt, summary, question string) string {
+func BuildInitialPrompt(normalizedPrompt, summary string, request Request) string {
 	var sb strings.Builder
 	sb.WriteString(strings.TrimSpace(normalizedPrompt))
 	sb.WriteString("\n\n## Runtime Context\n")
@@ -36,15 +36,60 @@ func BuildInitialPrompt(normalizedPrompt, summary, question string) string {
 		sb.WriteString(strings.TrimSpace(summary))
 		sb.WriteByte('\n')
 	}
+	if strings.TrimSpace(request.HistoryText()) != "" {
+		sb.WriteString("\n## Message Context\n")
+		sb.WriteString(strings.TrimSpace(renderMessageContext(request)))
+		sb.WriteByte('\n')
+	}
 	sb.WriteString("\n## User Message\n")
-	sb.WriteString(strings.TrimSpace(question))
+	sb.WriteString(strings.TrimSpace(request.UserMessage))
 	sb.WriteByte('\n')
 	return sb.String()
 }
 
-func BuildResumePrompt(question string) string {
-	return fmt.Sprintf(
-		"Continue the existing TiDB query tuning conversation.\n\nNew user message:\n%s\n",
-		strings.TrimSpace(question),
-	)
+func BuildResumePrompt(request Request) string {
+	var sb strings.Builder
+	sb.WriteString("Continue the existing TiDB query tuning conversation.\n")
+	if strings.TrimSpace(request.HistoryText()) != "" {
+		sb.WriteString("\nMessage context:\n")
+		sb.WriteString(strings.TrimSpace(renderMessageContext(request)))
+		sb.WriteByte('\n')
+	}
+	sb.WriteString("\nNew user message:\n")
+	sb.WriteString(strings.TrimSpace(request.UserMessage))
+	sb.WriteByte('\n')
+	return sb.String()
+}
+
+// todo check if this too long, output it by hand to check
+func renderMessageContext(request Request) string {
+	var sb strings.Builder
+	for _, note := range request.RuntimeNotes {
+		note = strings.TrimSpace(note)
+		if note == "" {
+			continue
+		}
+		fmt.Fprintf(&sb, "- %s\n", note)
+	}
+	for _, attachment := range request.Attachments {
+		fmt.Fprintf(&sb, "- attachment kind=%s", strings.TrimSpace(attachment.Kind))
+		if name := strings.TrimSpace(attachment.OriginalName); name != "" {
+			fmt.Fprintf(&sb, ", name=%s", name)
+		}
+		if path := strings.TrimSpace(attachment.SavedPath); path != "" {
+			fmt.Fprintf(&sb, ", saved_path=%s", path)
+		}
+		if dir := strings.TrimSpace(attachment.ExtractedDir); dir != "" {
+			fmt.Fprintf(&sb, ", extracted_dir=%s", dir)
+		}
+		sb.WriteByte('\n')
+		for _, note := range attachment.Notes {
+			note = strings.TrimSpace(note)
+			if note == "" {
+				continue
+			}
+			fmt.Fprintf(&sb, "  - %s\n", note)
+		}
+	}
+	return strings.TrimSpace(sb.String())
 }

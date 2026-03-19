@@ -30,9 +30,13 @@ type Config struct {
 	LogFile string // absolute path
 
 	// Lark (larkbot only)
-	FeishuAppID             string
-	FeishuAppSecret         string
-	FeishuDedupTimeoutInMin int
+	FeishuAppID              string
+	FeishuAppSecret          string
+	FeishuDedupTimeoutInMin  int
+	FeishuAttachmentRoot     string
+	FeishuAttachmentTTLMin   int
+	FeishuAttachmentCleanup  int
+	FeishuAttachmentMaxBytes int
 }
 
 func Load() (*Config, error) {
@@ -42,20 +46,24 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		ProjectRoot:             projectRoot,
-		PromptFile:              resolvePath(projectRoot, envOrDefault("PROMPT_FILE", "prompt")),
-		CodexBin:                envOrDefault("CODEX_BIN", "codex"),
-		CodexModel:              envOrDefault("CODEX_MODEL", "gpt-5.3-codex"),
-		CodexReasoningEffort:    envOrDefault("CODEX_REASONING_EFFORT", "medium"),
-		CodexSandbox:            envOrDefault("CODEX_SANDBOX", "read-only"),
-		CodexSessionStore:       resolvePath(projectRoot, envOrDefault("CODEX_SESSION_STORE", ".askplanner/sessions.json")),
-		CodexMaxTurns:           envAsInt("CODEX_MAX_TURNS", 30),
-		CodexSessionTTLHours:    envAsInt("CODEX_SESSION_TTL_HOURS", 24),
-		CodexTimeoutSec:         envAsInt("CODEX_TIMEOUT_SEC", 120),
-		LogFile:                 resolvePath(projectRoot, envOrDefault("LOG_FILE", ".askplanner/askplanner.log")),
-		FeishuAppID:             os.Getenv("FEISHU_APP_ID"),
-		FeishuAppSecret:         os.Getenv("FEISHU_APP_SECRET"),
-		FeishuDedupTimeoutInMin: envAsInt("FEISHU_DEDUP_MESSAGE_TIMEOUT_IN_MIN", 360),
+		ProjectRoot:              projectRoot,
+		PromptFile:               resolvePath(projectRoot, envOrDefault("PROMPT_FILE", "prompt")),
+		CodexBin:                 envOrDefault("CODEX_BIN", "codex"),
+		CodexModel:               envOrDefault("CODEX_MODEL", "gpt-5.3-codex"),
+		CodexReasoningEffort:     envOrDefault("CODEX_REASONING_EFFORT", "medium"),
+		CodexSandbox:             envOrDefault("CODEX_SANDBOX", "read-only"),
+		CodexSessionStore:        resolvePath(projectRoot, envOrDefault("CODEX_SESSION_STORE", ".askplanner/sessions.json")),
+		CodexMaxTurns:            envAsInt("CODEX_MAX_TURNS", 30),
+		CodexSessionTTLHours:     envAsInt("CODEX_SESSION_TTL_HOURS", 24),
+		CodexTimeoutSec:          envAsInt("CODEX_TIMEOUT_SEC", 120),
+		LogFile:                  resolvePath(projectRoot, envOrDefault("LOG_FILE", ".askplanner/askplanner.log")),
+		FeishuAppID:              os.Getenv("FEISHU_APP_ID"),
+		FeishuAppSecret:          os.Getenv("FEISHU_APP_SECRET"),
+		FeishuDedupTimeoutInMin:  envAsInt("FEISHU_DEDUP_MESSAGE_TIMEOUT_IN_MIN", 360),
+		FeishuAttachmentRoot:     resolvePath(projectRoot, envOrDefault("FEISHU_ATTACHMENT_ROOT", ".askplanner")),
+		FeishuAttachmentTTLMin:   envAsInt("FEISHU_ATTACHMENT_TTL_MINUTES", 360),
+		FeishuAttachmentCleanup:  envAsInt("FEISHU_ATTACHMENT_CLEANUP_INTERVAL_MINUTES", 10),
+		FeishuAttachmentMaxBytes: envAsInt("FEISHU_ATTACHMENT_MAX_BYTES", 104857600),
 	}, nil
 }
 

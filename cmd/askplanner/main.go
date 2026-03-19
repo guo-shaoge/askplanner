@@ -64,7 +64,7 @@ func main() {
 		}
 
 		fmt.Println()
-		answer, err := responder.Answer(ctx, conversationKey, question)
+		answer, err := responder.Answer(ctx, conversationKey, codex.NewTextRequest(question))
 		if err != nil {
 			fmt.Printf("Error: %v\n\n", err)
 			continue

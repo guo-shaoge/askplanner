@@ -154,6 +154,15 @@ The bot computes a conversation key from:
 
 That conversation key maps to a Codex `session_id` in the local session store.
 
+Lark attachment intake:
+
+- `text` messages continue to work as before
+- image messages are downloaded from the Lark message resource API and passed to Codex as local files
+- file messages currently support `.zip` bundles only, intended for TiDB `PLAN REPLAYER` output
+- attachment bundles are stored under `.askplanner/<conversationKey>/<messageID>/`
+- each bundle contains `raw/`, `extracted/`, and `meta.json`
+- bundles are deleted automatically after `FEISHU_ATTACHMENT_TTL_MINUTES`
+
 ## Configuration
 
 The main runtime is now driven by Codex-related environment variables.
@@ -181,6 +190,10 @@ Lark-specific variables:
 |--------|----------|-------------|
 | `FEISHU_APP_ID` | Yes | Feishu app ID |
 | `FEISHU_APP_SECRET` | Yes | Feishu app secret |
+| `FEISHU_ATTACHMENT_ROOT` | No | Attachment bundle root, defaults to `.askplanner` |
+| `FEISHU_ATTACHMENT_TTL_MINUTES` | No | Attachment retention TTL in minutes, defaults to `360` |
+| `FEISHU_ATTACHMENT_CLEANUP_INTERVAL_MINUTES` | No | Cleanup ticker interval in minutes, defaults to `10` |
+| `FEISHU_ATTACHMENT_MAX_BYTES` | No | Max downloaded attachment size, defaults to `104857600` |
 
 ## Build and Verify
 

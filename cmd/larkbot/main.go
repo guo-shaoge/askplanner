@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 	"lab/askplanner/internal/codex"
 	"lab/askplanner/internal/config"
+	larkrelay "lab/askplanner/internal/lark"
 )
 
 type messageDedup struct {
@@ -60,6 +62,13 @@ func main() {
 	}
 
 	apiClient := lark.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret, lark.WithLogLevel(larkcore.LogLevelInfo))
+	intake := larkrelay.NewIntake(
+		apiClient.Im.V1.MessageResource,
+		cfg.FeishuAttachmentRoot,
+		time.Duration(cfg.FeishuAttachmentTTLMin)*time.Minute,
+		int64(cfg.FeishuAttachmentMaxBytes),
+	)
+	cleaner := &larkrelay.Cleaner{Root: cfg.FeishuAttachmentRoot}
 
 	dedup := &messageDedup{}
 	go func() {
@@ -68,6 +77,15 @@ func main() {
 		for range ticker.C {
 			// six hours timeout
 			dedup.cleanup(time.Duration(cfg.FeishuDedupTimeoutInMin) * time.Minute)
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(time.Duration(cfg.FeishuAttachmentCleanup) * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := cleaner.CleanupExpired(time.Now().UTC()); err != nil {
+				log.Printf("[larkbot] cleanup attachments: %v", err)
+			}
 		}
 	}()
 
@@ -86,16 +104,26 @@ func main() {
 				return nil
 			}
 
-			question := extractQuestion(event)
-			if question == "" {
-				question = "Please introduce your capabilities."
+			conversationKey := buildConversationKey(event)
+			request, err := intake.BuildRequest(ctx, conversationKey, event)
+			if err != nil {
+				if userErr, ok := larkrelay.AsUserVisibleError(err); ok {
+					content, buildErr := buildTextContent(userErr.Message)
+					if buildErr != nil {
+						return fmt.Errorf("build reply content: %w", buildErr)
+					}
+					return replyMessage(ctx, apiClient, messageID, content)
+				}
+				errMsg := fmt.Sprintf("[larkbot] intake error: %v (message_id=%s, conversation=%s)",
+					err, messageID, conversationKey)
+				log.Print(errMsg)
+				return fmt.Errorf(errMsg)
 			}
 
-			conversationKey := buildConversationKey(event)
-			log.Printf("[larkbot] answering question: %q (message_id=%s, conversation=%s)",
-				question, messageID, conversationKey)
+			log.Printf("[larkbot] answering message_id=%s conversation=%s user_message=%q bundle_root=%s",
+				messageID, conversationKey, request.UserMessage, filepath.Join(cfg.FeishuAttachmentRoot, conversationKey))
 
-			answer, err := responder.Answer(ctx, conversationKey, question)
+			answer, err := responder.Answer(ctx, conversationKey, request)
 			if err != nil {
 				log.Printf("[larkbot] agent error: %v (message_id=%s)", err, messageID)
 				answer = "Agent Error: " + err.Error()
@@ -129,27 +157,6 @@ func extractMessageID(event *larkim.P2MessageReceiveV1) string {
 		return ""
 	}
 	return *event.Event.Message.MessageId
-}
-
-func extractQuestion(event *larkim.P2MessageReceiveV1) string {
-	if event == nil || event.Event == nil || event.Event.Message == nil || event.Event.Message.Content == nil {
-		return ""
-	}
-
-	raw := strings.TrimSpace(*event.Event.Message.Content)
-	if raw == "" {
-		return ""
-	}
-
-	if event.Event.Message.MessageType != nil && *event.Event.Message.MessageType == "text" {
-		var payload struct {
-			Text string `json:"text"`
-		}
-		if err := json.Unmarshal([]byte(raw), &payload); err == nil {
-			return strings.TrimSpace(payload.Text)
-		}
-	}
-	return raw
 }
 
 func buildConversationKey(event *larkim.P2MessageReceiveV1) string {
