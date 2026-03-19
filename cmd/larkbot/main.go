@@ -88,6 +88,8 @@ func main() {
 		keywords: normalizeKeywords(cfg.FeishuRecentFileKeywords),
 	}
 
+	fileRetention := time.Duration(cfg.FeishuFileRetentionHours) * time.Hour
+
 	dedup := &messageDedup{}
 	go func() {
 		ticker := time.NewTicker(1 * time.Minute)
@@ -95,7 +97,7 @@ func main() {
 		for range ticker.C {
 			// 60 hours timeout
 			dedup.cleanup(time.Duration(cfg.FeishuDedupTimeoutInMin) * time.Minute)
-			if err := cleanupDownloadedFiles(filePolicy.dir, filePolicy.lookback); err != nil {
+			if err := cleanupDownloadedFiles(filePolicy.dir, fileRetention); err != nil {
 				log.Printf("[larkbot] cleanup downloaded files: %v", err)
 			}
 		}
@@ -171,7 +173,7 @@ func shouldHandleEvent(event *larkim.P2MessageReceiveV1, bot botIdentity) (bool,
 		return false, "empty message type"
 	}
 	if !isGroupChat(event) {
-		if msgType == "text" || msgType == "file" {
+		if msgType == "text" || msgType == "file" || msgType == "image" {
 			return true, ""
 		}
 		return false, fmt.Sprintf("unsupported p2p message type=%s", msgType)
@@ -231,6 +233,8 @@ func buildQuestion(ctx context.Context, apiClient *lark.Client, filePolicy recen
 		return buildTextQuestion(ctx, apiClient, filePolicy, event, raw)
 	case "file":
 		return buildFileQuestion(ctx, apiClient, filePolicy.dir, extractMessageID(event), raw)
+	case "image":
+		return buildImageQuestion(ctx, apiClient, filePolicy.dir, extractMessageID(event), raw)
 	default:
 		return raw, nil
 	}
@@ -251,7 +255,7 @@ func buildTextQuestion(ctx context.Context, apiClient *lark.Client, filePolicy r
 		return text, nil
 	}
 
-	localPath, originalName, err := downloadMessageFile(ctx, apiClient, filePolicy.dir, ref.messageID, ref.fileKey)
+	localPath, originalName, err := downloadMessageResource(ctx, apiClient, filePolicy.dir, ref.messageID, ref.fileKey, "file")
 	if err != nil {
 		log.Printf("[larkbot] recent file download failed for message_id=%s source_message_id=%s: %v",
 			extractMessageID(event), ref.messageID, err)
@@ -277,7 +281,7 @@ func buildFileQuestion(ctx context.Context, apiClient *lark.Client, fileDir, mes
 		return "", fmt.Errorf("file message missing file_key")
 	}
 
-	localPath, originalName, err := downloadMessageFile(ctx, apiClient, fileDir, messageID, payload.FileKey)
+	localPath, originalName, err := downloadMessageResource(ctx, apiClient, fileDir, messageID, payload.FileKey, "file")
 	if err != nil {
 		return "", err
 	}
@@ -288,21 +292,38 @@ func buildFileQuestion(ctx context.Context, apiClient *lark.Client, fileDir, mes
 	), nil
 }
 
-func downloadMessageFile(ctx context.Context, apiClient *lark.Client, fileDir, messageID, fileKey string) (string, string, error) {
+func buildImageQuestion(ctx context.Context, apiClient *lark.Client, fileDir, messageID, raw string) (string, error) {
+	var payload larkim.MessageImage
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return "", fmt.Errorf("parse image message content: %w", err)
+	}
+	if strings.TrimSpace(payload.ImageKey) == "" {
+		return "", fmt.Errorf("image message missing image_key")
+	}
+
+	localPath, originalName, err := downloadMessageResource(ctx, apiClient, fileDir, messageID, payload.ImageKey, "image")
+	if err != nil {
+		return "", err
+	}
+
+	return composeQuestionWithFile("", localPath, originalName), nil
+}
+
+func downloadMessageResource(ctx context.Context, apiClient *lark.Client, fileDir, messageID, fileKey, resourceType string) (string, string, error) {
 	resp, err := apiClient.Im.V1.MessageResource.Get(ctx,
 		larkim.NewGetMessageResourceReqBuilder().
 			MessageId(messageID).
 			FileKey(fileKey).
-			Type("file").
+			Type(resourceType).
 			Build())
 	if err != nil {
-		return "", "", fmt.Errorf("download file from Feishu: %w", err)
+		return "", "", fmt.Errorf("download %s from Feishu: %w", resourceType, err)
 	}
 	if resp == nil || resp.File == nil {
-		return "", "", fmt.Errorf("download file from Feishu: empty response")
+		return "", "", fmt.Errorf("download %s from Feishu: empty response", resourceType)
 	}
 	if !resp.Success() {
-		return "", "", fmt.Errorf("download file from Feishu failed: code=%d, msg=%s", resp.Code, resp.Msg)
+		return "", "", fmt.Errorf("download %s from Feishu failed: code=%d, msg=%s", resourceType, resp.Code, resp.Msg)
 	}
 
 	dir := filepath.Join(fileDir, sanitizePathSegment(messageID, "message"))
@@ -310,13 +331,17 @@ func downloadMessageFile(ctx context.Context, apiClient *lark.Client, fileDir, m
 		return "", "", fmt.Errorf("create file dir: %w", err)
 	}
 
-	originalName := sanitizeFileName(resp.FileName)
+	originalName := resp.FileName
+	if strings.TrimSpace(originalName) == "" {
+		originalName = fileKey + ".png"
+	}
+	originalName = sanitizeFileName(originalName)
 	localPath := filepath.Join(dir, originalName)
 	if err := resp.WriteFile(localPath); err != nil {
 		return "", "", fmt.Errorf("write file %s: %w", localPath, err)
 	}
 
-	log.Printf("[larkbot] downloaded file message_id=%s file_key=%s path=%s", messageID, fileKey, localPath)
+	log.Printf("[larkbot] downloaded %s message_id=%s file_key=%s path=%s", resourceType, messageID, fileKey, localPath)
 	return localPath, originalName, nil
 }
 

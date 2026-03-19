@@ -156,7 +156,7 @@ If your bot is configured to receive only `@bot` messages in group chats, users 
 
 By default, recent-file lookup only activates when the `@bot` text contains file-related keywords such as `file`, `zip`, `replayer`, `文件`, or `附件`. The matching window is 10 minutes, and downloaded attachment directories older than that window are cleaned up automatically. You can tune both behaviors with environment variables.
 
-Only `file` attachments are downloaded today. `image` messages are not yet fetched into the workspace.
+Both `file` and `image` attachments are downloaded to the workspace. Other message types (audio, video, sticker, etc.) are not yet supported.
 
 The bot computes a conversation key from:
 - `thread_id` when present
@@ -194,7 +194,8 @@ Lark-specific variables:
 | `FEISHU_APP_SECRET` | Yes | Feishu app secret |
 | `FEISHU_BOT_NAME` | No | Bot display name used to match mentions in group chats; defaults to `askplanner` |
 | `FEISHU_FILE_DIR` | No | Local directory for downloaded Lark file attachments; defaults to `.askplanner/lark-files` |
-| `FEISHU_RECENT_FILE_WINDOW_MIN` | No | Recent-file lookup and cleanup window in minutes; defaults to `10` |
+| `FEISHU_FILE_RETENTION_HOURS` | No | How long downloaded attachments are kept before cleanup; defaults to `24` (matches session TTL) |
+| `FEISHU_RECENT_FILE_WINDOW_MIN` | No | Recent-file lookup window in minutes; defaults to `10` |
 | `FEISHU_RECENT_FILE_KEYWORDS` | No | Comma-separated keywords that trigger recent-file lookup; defaults to `file,files,attachment,attachments,zip,replayer,plan replayer,文件,附件,压缩包` |
 
 ## Build and Verify
