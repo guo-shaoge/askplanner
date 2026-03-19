@@ -138,28 +138,10 @@ func defaultUserMessage(userText string, attachments []AttachmentRef) string {
 	if userText != "" {
 		return userText
 	}
-
-	hasZIP := false
-	hasImage := false
-	for _, attachment := range attachments {
-		switch attachment.Kind {
-		case AttachmentKindFile:
-			hasZIP = true
-		case AttachmentKindImage:
-			hasImage = true
-		}
+	if len(attachments) == 0 {
+		return ""
 	}
-
-	switch {
-	case hasZIP && hasImage:
-		return "Analyze the attached PLAN REPLAYER bundle and images together, then summarize findings, likely root causes, and next steps."
-	case hasZIP:
-		return "Analyze the attached PLAN REPLAYER bundle and summarize findings, likely root causes, and next steps."
-	case hasImage:
-		return "Inspect the attached image and explain any relevant observations for this TiDB tuning conversation."
-	default:
-		return "Analyze the attached Lark message resources and summarize the relevant findings."
-	}
+	return "I attached files without a question. Please reply briefly that you can see the attached file or files, and ask me to send a more specific question that uses them. Do not analyze the files yet."
 }
 
 func AsUserVisibleError(err error) (*UserVisibleError, bool) {

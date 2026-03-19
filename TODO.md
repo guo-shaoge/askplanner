@@ -6,6 +6,7 @@
 - support diagnose by clinic link
 - error handling: make sure all errors should return to user clearly(like network issue, rate limte ect)
 - switch branch and read code
+- show text result as markdown
 
 ## implementation pespective
 - rotate log to avoid getting log too large

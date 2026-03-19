@@ -117,7 +117,8 @@ func main() {
 				errMsg := fmt.Sprintf("[larkbot] intake error: %v (message_id=%s, conversation=%s)",
 					err, messageID, conversationKey)
 				log.Print(errMsg)
-				return fmt.Errorf(errMsg)
+				// todo return error by user text
+				return fmt.Errorf("[larkbot] intake error: %v", err)
 			}
 
 			log.Printf("[larkbot] answering message_id=%s conversation=%s user_message=%q bundle_root=%s",
