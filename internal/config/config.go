@@ -32,7 +32,7 @@ type Config struct {
 	// Lark (larkbot only)
 	FeishuAppID               string
 	FeishuAppSecret           string
-	FeishuBotOpenID           string
+	FeishuBotName             string
 	FeishuDedupTimeoutInMin   int
 	FeishuFileDir             string // absolute path
 	FeishuRecentFileWindowMin int
@@ -59,8 +59,8 @@ func Load() (*Config, error) {
 		LogFile:                   resolvePath(projectRoot, envOrDefault("LOG_FILE", ".askplanner/askplanner.log")),
 		FeishuAppID:               os.Getenv("FEISHU_APP_ID"),
 		FeishuAppSecret:           os.Getenv("FEISHU_APP_SECRET"),
-		FeishuBotOpenID:           strings.TrimSpace(os.Getenv("FEISHU_BOT_OPEN_ID")),
-		FeishuDedupTimeoutInMin:   envAsInt("FEISHU_DEDUP_MESSAGE_TIMEOUT_IN_MIN", 360),
+		FeishuBotName:             strings.ToLower(strings.TrimSpace(envOrDefault("FEISHU_BOT_NAME", "askplanner"))),
+		FeishuDedupTimeoutInMin:   envAsInt("FEISHU_DEDUP_MESSAGE_TIMEOUT_IN_MIN", 3600),
 		FeishuFileDir:             resolvePath(projectRoot, envOrDefault("FEISHU_FILE_DIR", ".askplanner/lark-files")),
 		FeishuRecentFileWindowMin: envAsInt("FEISHU_RECENT_FILE_WINDOW_MIN", 10),
 		FeishuRecentFileKeywords: envAsCSV("FEISHU_RECENT_FILE_KEYWORDS", []string{

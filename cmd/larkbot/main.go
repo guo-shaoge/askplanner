@@ -35,7 +35,7 @@ type recentFilePolicy struct {
 }
 
 type botIdentity struct {
-	openID string
+	name string
 }
 
 type messageDedup struct {
@@ -72,8 +72,8 @@ func main() {
 	if cfg.FeishuAppID == "" || cfg.FeishuAppSecret == "" {
 		log.Fatalf("FEISHU_APP_ID and FEISHU_APP_SECRET are required")
 	}
-	if strings.TrimSpace(cfg.FeishuBotOpenID) == "" {
-		log.Printf("[larkbot] FEISHU_BOT_OPEN_ID is empty; group @ detection will rely on text_without_at_bot only")
+	if strings.TrimSpace(cfg.FeishuBotName) == "" {
+		log.Printf("[larkbot] FEISHU_BOT_NAME is empty; group @ detection will rely on text_without_at_bot only")
 	}
 
 	responder, err := codex.NewResponder(cfg)
@@ -93,7 +93,7 @@ func main() {
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			// six hours timeout
+			// 60 hours timeout
 			dedup.cleanup(time.Duration(cfg.FeishuDedupTimeoutInMin) * time.Minute)
 			if err := cleanupDownloadedFiles(filePolicy.dir, filePolicy.lookback); err != nil {
 				log.Printf("[larkbot] cleanup downloaded files: %v", err)
@@ -115,7 +115,7 @@ func main() {
 				log.Printf("[larkbot] skip duplicate message_id=%s", messageID)
 				return nil
 			}
-			if ok, reason := shouldHandleEvent(event, botIdentity{openID: cfg.FeishuBotOpenID}); !ok {
+			if ok, reason := shouldHandleEvent(event, botIdentity{name: cfg.FeishuBotName}); !ok {
 				log.Printf("[larkbot] skip message_id=%s: %s", messageID, reason)
 				return nil
 			}
@@ -182,7 +182,7 @@ func shouldHandleEvent(event *larkim.P2MessageReceiveV1, bot botIdentity) (bool,
 	if isTextDirectedToBot(event, bot) {
 		return true, ""
 	}
-	return false, fmt.Sprintf("group text not addressed to bot mentions=%d bot_open_id_set=%t", len(extractMentionKeys(event)), bot.openID != "")
+	return false, fmt.Sprintf("group text not addressed to bot mentions=%d bot_name_set=%t", len(extractMentionKeys(event)), bot.name != "")
 }
 
 func isGroupChat(event *larkim.P2MessageReceiveV1) bool {
@@ -457,6 +457,11 @@ func sameSender(item *larkim.Message, senderIDs map[string]struct{}) bool {
 	if item == nil || item.Sender == nil || item.Sender.Id == nil {
 		return false
 	}
+	idType := trimPtr(item.Sender.IdType)
+	if idType != "" && idType != "open_id" {
+		log.Printf("[larkbot] sameSender: unexpected sender id_type=%q message_id=%s, skipping", idType, trimPtr(item.MessageId))
+		return false
+	}
 	_, ok := senderIDs[strings.TrimSpace(*item.Sender.Id)]
 	return ok
 }
@@ -550,15 +555,15 @@ func extractMentionKeys(event *larkim.P2MessageReceiveV1) []string {
 }
 
 func mentionsBot(event *larkim.P2MessageReceiveV1, bot botIdentity) bool {
-	if strings.TrimSpace(bot.openID) == "" || event == nil || event.Event == nil || event.Event.Message == nil {
+	if strings.TrimSpace(bot.name) == "" || event == nil || event.Event == nil || event.Event.Message == nil {
 		return false
 	}
 
 	for _, mention := range event.Event.Message.Mentions {
-		if mention == nil || mention.Id == nil || mention.Id.OpenId == nil {
+		if mention == nil || mention.Name == nil {
 			continue
 		}
-		if strings.TrimSpace(*mention.Id.OpenId) == bot.openID {
+		if strings.EqualFold(strings.TrimSpace(*mention.Name), bot.name) {
 			return true
 		}
 	}

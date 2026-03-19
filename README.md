@@ -144,11 +144,11 @@ Run:
 ```bash
 FEISHU_APP_ID="cli_xxxx" \
 FEISHU_APP_SECRET="xxxx" \
-FEISHU_BOT_OPEN_ID="ou_xxx" \
+FEISHU_BOT_NAME="askplanner" \
 ./bin/askplanner_larkbot
 ```
 
-In group chats, the bot only handles text messages that are explicitly addressed to it. The most reliable setup is to configure `FEISHU_BOT_OPEN_ID` so the bot can verify that the mention target is actually itself instead of some other user.
+In group chats, the bot only handles text messages that are explicitly addressed to it. The most reliable setup is to configure `FEISHU_BOT_NAME` (defaults to `askplanner`) so the bot can verify that the mention target is actually itself by matching the `name` field in the mentions list.
 
 The bot can also receive `file` messages. It downloads the attachment to a local directory and tells Codex the local path so the agent can inspect the file directly. The default download directory is `.askplanner/lark-files/`; set `FEISHU_FILE_DIR=/tmp/askplanner-lark-files` if you want to place attachments under `/tmp`.
 
@@ -192,7 +192,7 @@ Lark-specific variables:
 |--------|----------|-------------|
 | `FEISHU_APP_ID` | Yes | Feishu app ID |
 | `FEISHU_APP_SECRET` | Yes | Feishu app secret |
-| `FEISHU_BOT_OPEN_ID` | No | Bot open ID used to verify group mentions actually target this bot; recommended when relying on `mentions` fallback |
+| `FEISHU_BOT_NAME` | No | Bot display name used to match mentions in group chats; defaults to `askplanner` |
 | `FEISHU_FILE_DIR` | No | Local directory for downloaded Lark file attachments; defaults to `.askplanner/lark-files` |
 | `FEISHU_RECENT_FILE_WINDOW_MIN` | No | Recent-file lookup and cleanup window in minutes; defaults to `10` |
 | `FEISHU_RECENT_FILE_KEYWORDS` | No | Comma-separated keywords that trigger recent-file lookup; defaults to `file,files,attachment,attachments,zip,replayer,plan replayer,文件,附件,压缩包` |
