@@ -2,7 +2,7 @@ package config
 
 import (
 	"fmt"
-	_"io"
+	_ "io"
 	"log"
 	"os"
 	"path/filepath"
@@ -30,8 +30,9 @@ type Config struct {
 	LogFile string // absolute path
 
 	// Lark (larkbot only)
-	FeishuAppID     string
-	FeishuAppSecret string
+	FeishuAppID             string
+	FeishuAppSecret         string
+	FeishuDedupTimeoutInMin int
 }
 
 func Load() (*Config, error) {
@@ -41,19 +42,20 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		ProjectRoot:          projectRoot,
-		PromptFile:           resolvePath(projectRoot, envOrDefault("PROMPT_FILE", "prompt")),
-		CodexBin:             envOrDefault("CODEX_BIN", "codex"),
-		CodexModel:           envOrDefault("CODEX_MODEL", "gpt-5.3-codex"),
-		CodexReasoningEffort: envOrDefault("CODEX_REASONING_EFFORT", "medium"),
-		CodexSandbox:         envOrDefault("CODEX_SANDBOX", "read-only"),
-		CodexSessionStore:    resolvePath(projectRoot, envOrDefault("CODEX_SESSION_STORE", ".askplanner/sessions.json")),
-		CodexMaxTurns:        envAsInt("CODEX_MAX_TURNS", 30),
-		CodexSessionTTLHours: envAsInt("CODEX_SESSION_TTL_HOURS", 24),
-		CodexTimeoutSec:      envAsInt("CODEX_TIMEOUT_SEC", 120),
-		LogFile:              resolvePath(projectRoot, envOrDefault("LOG_FILE", ".askplanner/askplanner.log")),
-		FeishuAppID:          os.Getenv("FEISHU_APP_ID"),
-		FeishuAppSecret:      os.Getenv("FEISHU_APP_SECRET"),
+		ProjectRoot:             projectRoot,
+		PromptFile:              resolvePath(projectRoot, envOrDefault("PROMPT_FILE", "prompt")),
+		CodexBin:                envOrDefault("CODEX_BIN", "codex"),
+		CodexModel:              envOrDefault("CODEX_MODEL", "gpt-5.3-codex"),
+		CodexReasoningEffort:    envOrDefault("CODEX_REASONING_EFFORT", "medium"),
+		CodexSandbox:            envOrDefault("CODEX_SANDBOX", "read-only"),
+		CodexSessionStore:       resolvePath(projectRoot, envOrDefault("CODEX_SESSION_STORE", ".askplanner/sessions.json")),
+		CodexMaxTurns:           envAsInt("CODEX_MAX_TURNS", 30),
+		CodexSessionTTLHours:    envAsInt("CODEX_SESSION_TTL_HOURS", 24),
+		CodexTimeoutSec:         envAsInt("CODEX_TIMEOUT_SEC", 120),
+		LogFile:                 resolvePath(projectRoot, envOrDefault("LOG_FILE", ".askplanner/askplanner.log")),
+		FeishuAppID:             os.Getenv("FEISHU_APP_ID"),
+		FeishuAppSecret:         os.Getenv("FEISHU_APP_SECRET"),
+		FeishuDedupTimeoutInMin: envAsInt("FEISHU_DEDUP_MESSAGE_TIMEOUT_IN_MIN", 360),
 	}, nil
 }
 

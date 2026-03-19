@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
+	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -16,6 +18,25 @@ import (
 	"lab/askplanner/internal/codex"
 	"lab/askplanner/internal/config"
 )
+
+type messageDedup struct {
+	seen sync.Map // messageId -> time.Time
+}
+
+func (d *messageDedup) isDuplicate(messageID string) bool {
+	_, loaded := d.seen.LoadOrStore(messageID, time.Now())
+	return loaded
+}
+
+func (d *messageDedup) cleanup(maxAge time.Duration) {
+	now := time.Now()
+	d.seen.Range(func(key, value any) bool {
+		if now.Sub(value.(time.Time)) > maxAge {
+			d.seen.Delete(key)
+		}
+		return true
+	})
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -40,6 +61,16 @@ func main() {
 
 	apiClient := lark.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret, lark.WithLogLevel(larkcore.LogLevelInfo))
 
+	dedup := &messageDedup{}
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			// six hours timeout
+			dedup.cleanup(time.Duration(cfg.FeishuDedupTimeoutInMin) * time.Minute)
+		}
+	}()
+
 	eventHandler := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 			log.Printf("[larkbot] message received: %s", larkcore.Prettify(event))
@@ -47,6 +78,11 @@ func main() {
 			messageID := extractMessageID(event)
 			if messageID == "" {
 				log.Printf("[larkbot] skip: empty message_id")
+				return nil
+			}
+
+			if dedup.isDuplicate(messageID) {
+				log.Printf("[larkbot] skip duplicate message_id=%s", messageID)
 				return nil
 			}
 
