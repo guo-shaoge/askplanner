@@ -70,7 +70,7 @@ func main() {
 		}
 
 		fmt.Println()
-		runtimeCtx, err := prefetcher.Enrich(ctx, clinicUserKey, question, codex.RuntimeContext{})
+		enriched, err := prefetcher.Enrich(ctx, clinicUserKey, question, codex.RuntimeContext{})
 		if err != nil {
 			if msg := clinic.UserFacingMessage(err); msg != "" {
 				log.Printf("[askplanner] clinic prefetch user-visible error: %v", err)
@@ -80,8 +80,13 @@ func main() {
 			fmt.Printf("Error: %v\n\n", err)
 			continue
 		}
+		if strings.TrimSpace(enriched.IntroReply) != "" {
+			fmt.Println(enriched.IntroReply)
+			fmt.Println()
+			continue
+		}
 
-		answer, err := responder.AnswerWithContext(ctx, conversationKey, question, runtimeCtx)
+		answer, err := responder.AnswerWithContext(ctx, conversationKey, question, enriched.RuntimeContext)
 		if err != nil {
 			fmt.Printf("Error: %v\n\n", err)
 			continue

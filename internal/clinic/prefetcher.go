@@ -22,6 +22,11 @@ type Prefetcher struct {
 
 const promptClinicLibraryLimit = 10
 
+type EnrichResult struct {
+	RuntimeContext codex.RuntimeContext
+	IntroReply     string
+}
+
 type UserError struct {
 	Message string
 	Cause   error
@@ -54,26 +59,30 @@ func NewPrefetcher(cfg *config.Config) (*Prefetcher, error) {
 	}, nil
 }
 
-func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runtime codex.RuntimeContext) (codex.RuntimeContext, error) {
+func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runtime codex.RuntimeContext) (EnrichResult, error) {
 	if !p.enabled {
-		return runtime, nil
+		return EnrichResult{RuntimeContext: runtime}, nil
 	}
 
+	previousURL := ""
 	runtime, loadErr := p.attachLatestStored(userKey, runtime)
 	if loadErr != nil {
-		return runtime, loadErr
+		return EnrichResult{RuntimeContext: runtime}, loadErr
+	}
+	if runtime.Clinic != nil {
+		previousURL = strings.TrimSpace(runtime.Clinic.SourceURL)
 	}
 
 	spec, matched, err := ParseSlowQueryLink(question)
 	if err != nil {
 		log.Printf("[clinic] parse failed for potential slow query link: %v", err)
-		return runtime, &UserError{
+		return EnrichResult{RuntimeContext: runtime}, &UserError{
 			Message: "I detected a Clinic slow query link but could not parse its cluster ID and time range. Please send the full share link from Clinic Slow Query.",
 			Cause:   err,
 		}
 	}
 	if !matched {
-		return runtime, nil
+		return EnrichResult{RuntimeContext: runtime}, nil
 	}
 	log.Printf("[clinic] parsed slow query link: cluster_id=%s start=%s end=%s digest=%s db=%s instance=%s url=%s",
 		spec.ClusterID,
@@ -86,7 +95,7 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 	)
 	if strings.TrimSpace(p.client.APIKey) == "" {
 		log.Printf("[clinic] prefetch skipped: CLINIC_API_KEY is empty for cluster_id=%s", spec.ClusterID)
-		return runtime, &UserError{
+		return EnrichResult{RuntimeContext: runtime}, &UserError{
 			Message: "Clinic slow query auto-analysis is enabled, but `CLINIC_API_KEY` is not configured.",
 		}
 	}
@@ -98,7 +107,7 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 		if strings.Contains(err.Error(), "auth failed") {
 			msg = "Clinic API authentication failed. Check `CLINIC_API_KEY` and verify the key can access clinic.pingcap.com."
 		}
-		return runtime, &UserError{
+		return EnrichResult{RuntimeContext: runtime}, &UserError{
 			Message: msg,
 			Cause:   err,
 		}
@@ -116,13 +125,17 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 		if runtime.ClinicLibrary != nil {
 			runtime.ClinicLibrary.ActiveItemName = ""
 		}
-		return runtime, nil
+		return EnrichResult{RuntimeContext: runtime}, nil
 	}
 	runtime, err = p.attachLatestStored(userKey, runtime)
 	if err != nil {
-		return runtime, err
+		return EnrichResult{RuntimeContext: runtime}, err
 	}
-	return runtime, nil
+	result := EnrichResult{RuntimeContext: runtime}
+	if strings.TrimSpace(spec.RawURL) != "" && !strings.EqualFold(previousURL, strings.TrimSpace(spec.RawURL)) {
+		result.IntroReply = buildIntroReply(runtime)
+	}
+	return result, nil
 }
 
 func (p *Prefetcher) saveAnalysis(userKey string, analysis *AnalysisContext) error {
@@ -295,4 +308,62 @@ func UserFacingMessage(err error) string {
 		return userErr.Message
 	}
 	return ""
+}
+
+func buildIntroReply(runtime codex.RuntimeContext) string {
+	clinic := runtime.Clinic
+	if clinic == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("I saved this Clinic slow query snapshot locally.\n")
+	sb.WriteString("- Cluster: ")
+	sb.WriteString(strings.TrimSpace(clinic.ClusterID))
+	if clinic.ClusterName != "" {
+		sb.WriteString(" (")
+		sb.WriteString(strings.TrimSpace(clinic.ClusterName))
+		sb.WriteByte(')')
+	}
+	sb.WriteByte('\n')
+	if clinic.IsDetail {
+		sb.WriteString("- Scope: detail\n")
+	} else {
+		sb.WriteString("- Scope: grouped slow-query list\n")
+	}
+	if !clinic.StartTime.IsZero() && !clinic.EndTime.IsZero() {
+		sb.WriteString("- Time Range (UTC): ")
+		sb.WriteString(clinic.StartTime.UTC().Format(time.RFC3339))
+		sb.WriteString(" to ")
+		sb.WriteString(clinic.EndTime.UTC().Format(time.RFC3339))
+		sb.WriteByte('\n')
+	}
+	if clinic.Digest != "" || clinic.Database != "" || clinic.Instance != "" {
+		sb.WriteString("- Filters:")
+		if clinic.Digest != "" {
+			sb.WriteString(" digest=")
+			sb.WriteString(clinic.Digest)
+		}
+		if clinic.Database != "" {
+			sb.WriteString(" db=")
+			sb.WriteString(clinic.Database)
+		}
+		if clinic.Instance != "" {
+			sb.WriteString(" instance=")
+			sb.WriteString(clinic.Instance)
+		}
+		sb.WriteByte('\n')
+	}
+	sb.WriteString(fmt.Sprintf("- Summary: total_queries=%d avg_query_time_sec=%.6f max_query_time_sec=%.6f\n",
+		clinic.Summary.TotalQueries,
+		clinic.Summary.AvgQueryTime,
+		clinic.Summary.MaxQueryTime,
+	))
+	if runtime.ClinicLibrary != nil && runtime.ClinicLibrary.ActiveItemName != "" {
+		sb.WriteString("- Saved Entry: ")
+		sb.WriteString(runtime.ClinicLibrary.ActiveItemName)
+		sb.WriteByte('\n')
+	}
+	sb.WriteString("Tell me what you want to do next with this slow query, for example: root-cause analysis, plan interpretation, bottleneck summary, or optimization suggestions.")
+	return sb.String()
 }

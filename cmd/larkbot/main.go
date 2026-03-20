@@ -190,7 +190,7 @@ func handleEvent(ctx context.Context, apiClient *lark.Client, responder *codex.R
 	log.Printf("[larkbot] answering question: %q (message_id=%s, conversation=%s)",
 		question, extractMessageID(event), prepared.conversationKey)
 
-	runtimeCtx, err := prefetcher.Enrich(ctx, prepared.userKey, question, codex.RuntimeContext{
+	enriched, err := prefetcher.Enrich(ctx, prepared.userKey, question, codex.RuntimeContext{
 		Attachment: prepared.attachmentCtx,
 	})
 	if err != nil {
@@ -201,8 +201,14 @@ func handleEvent(ctx context.Context, apiClient *lark.Client, responder *codex.R
 		}
 		return "", err
 	}
+	if strings.TrimSpace(enriched.IntroReply) != "" {
+		if strings.TrimSpace(prepared.prefix) != "" {
+			return prepared.prefix + "\n\n" + enriched.IntroReply, nil
+		}
+		return enriched.IntroReply, nil
+	}
 
-	answer, err := responder.AnswerWithContext(ctx, prepared.conversationKey, question, runtimeCtx)
+	answer, err := responder.AnswerWithContext(ctx, prepared.conversationKey, question, enriched.RuntimeContext)
 	if err != nil {
 		return "", err
 	}
