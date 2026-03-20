@@ -89,9 +89,11 @@ func TestBuildInitialPromptIncludesClinicContext(t *testing.T) {
 
 	wantSnippets := []string{
 		"The current user's saved Clinic slow-query library is stored under: /tmp/clinic-user-a",
+		"Do not try to open Clinic URLs, log in to Clinic, or fetch Clinic data yourself.",
 		"Current active Clinic entry: clinic_20260320_100000_123_digest",
 		"clinic_20260320_100000_123_digest [detail] saved_at=2026-03-20T10:00:00Z cluster_id=123 digest=digest-1",
 		"Clinic slow query link detected and prefetched by the relay",
+		"Do not directly access Clinic from Codex. Do not claim that you can open the Clinic link yourself.",
 		"cluster_id=123",
 		"cluster_name=prod-a",
 		"org_name=Acme",

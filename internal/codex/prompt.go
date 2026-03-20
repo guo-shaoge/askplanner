@@ -126,6 +126,7 @@ func writeClinicLibraryContext(sb *strings.Builder, library *ClinicLibraryContex
 	sb.WriteString(strings.TrimSpace(library.RootDir))
 	sb.WriteString("\n")
 	sb.WriteString("- Each Clinic entry is a top-level directory containing `metadata.json`, `analysis.json`, and `summary.md`.\n")
+	sb.WriteString("- Do not try to open Clinic URLs, log in to Clinic, or fetch Clinic data yourself. All Clinic access is performed by the relay/agent, and you must rely only on the saved local Clinic entries plus the prefetched Clinic context in this prompt.\n")
 	sb.WriteString("- If the user asks a follow-up question about Clinic slow-query data without sending a new link, default to the active Clinic entry below.\n")
 	sb.WriteString("- If the user clearly refers to another visible Clinic entry, inspect that entry instead. If you still cannot tell which entry they mean, do not guess; ask the user which Clinic entry to use.\n")
 
@@ -188,6 +189,7 @@ func writeClinicContext(sb *strings.Builder, clinic *ClinicContext) {
 	}
 
 	sb.WriteString("- Clinic slow query link detected and prefetched by the relay. Treat the fetched data below as the ground truth for this turn.\n")
+	sb.WriteString("- Do not directly access Clinic from Codex. Do not claim that you can open the Clinic link yourself. If the user needs data outside this prefetched scope, ask them to send another Clinic link so the relay can fetch it.\n")
 	sb.WriteString("- Clinic source URL: ")
 	sb.WriteString(strings.TrimSpace(clinic.SourceURL))
 	sb.WriteByte('\n')
