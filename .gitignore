@@ -1,3 +1,4 @@
 bin/
 .askplanner/
 *.log
+tmpdocs/

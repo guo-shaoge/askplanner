@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"time"
 )
 
 func LoadPrompt(path string) (string, error) {
@@ -25,18 +27,25 @@ func PromptHash(prompt string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func BuildInitialPrompt(normalizedPrompt, summary, question, attachmentDir string) string {
+type AttachmentItem struct {
+	Name         string
+	Type         string
+	SavedAt      time.Time
+	OriginalName string
+}
+
+type AttachmentContext struct {
+	RootDir string
+	Items   []AttachmentItem
+}
+
+func BuildInitialPrompt(normalizedPrompt, summary, question string, attachment AttachmentContext) string {
 	var sb strings.Builder
 	sb.WriteString(strings.TrimSpace(normalizedPrompt))
 	sb.WriteString("\n\n## Runtime Context\n")
 	sb.WriteString("- You are serving a TiDB query tuning chat relay backed by Codex CLI.\n")
 	sb.WriteString("- Answer the user's latest message directly.\n")
-	if strings.TrimSpace(attachmentDir) != "" {
-		sb.WriteString("- Uploaded Lark attachments, if any, are stored under: ")
-		sb.WriteString(strings.TrimSpace(attachmentDir))
-		sb.WriteString("\n")
-		sb.WriteString("- If the user refers to an uploaded file, PLAN REPLAYER zip, or previous attachment, inspect this directory and recent subdirectories before asking the user to upload again.\n")
-	}
+	writeAttachmentContext(&sb, attachment)
 	if strings.TrimSpace(summary) != "" {
 		sb.WriteString("\n## Conversation Summary\n")
 		sb.WriteString(strings.TrimSpace(summary))
@@ -48,18 +57,57 @@ func BuildInitialPrompt(normalizedPrompt, summary, question, attachmentDir strin
 	return sb.String()
 }
 
-func BuildResumePrompt(question, attachmentDir string) string {
+func BuildResumePrompt(question string, attachment AttachmentContext) string {
 	var sb strings.Builder
 	sb.WriteString("Continue the existing TiDB query tuning conversation.\n")
-	if strings.TrimSpace(attachmentDir) != "" {
-		sb.WriteString("\nRuntime note:\n")
-		sb.WriteString("- Uploaded Lark attachments, if any, are stored under: ")
-		sb.WriteString(strings.TrimSpace(attachmentDir))
-		sb.WriteString("\n")
-		sb.WriteString("- If the user refers to a prior uploaded file, PLAN REPLAYER zip, or attachment, inspect this directory and recent subdirectories before asking the user to upload again.\n")
-	}
+	writeAttachmentContext(&sb, attachment)
 	sb.WriteString("\nNew user message:\n")
 	sb.WriteString(strings.TrimSpace(question))
 	sb.WriteByte('\n')
 	return sb.String()
+}
+
+func writeAttachmentContext(sb *strings.Builder, attachment AttachmentContext) {
+	rootDir := strings.TrimSpace(attachment.RootDir)
+	if rootDir == "" {
+		return
+	}
+
+	sb.WriteString("- The current user's uploaded-file library is stored under: ")
+	sb.WriteString(rootDir)
+	sb.WriteString("\n")
+	sb.WriteString("- If the user asks you to inspect or analyze a file, first inspect this user library.\n")
+	sb.WriteString("- If you cannot tell which file the user means, do not guess. Use only the visible top-level entries below and ask the user which one to inspect.\n")
+
+	items := append([]AttachmentItem(nil), attachment.Items...)
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].SavedAt.Equal(items[j].SavedAt) {
+			return items[i].Name < items[j].Name
+		}
+		return items[i].SavedAt.After(items[j].SavedAt)
+	})
+	if len(items) == 0 {
+		sb.WriteString("- Current top-level entries: none.\n")
+		return
+	}
+
+	sb.WriteString("- Current top-level entries (newest first):\n")
+	for _, item := range items {
+		sb.WriteString("  - ")
+		sb.WriteString(item.Name)
+		if strings.TrimSpace(item.Type) != "" {
+			sb.WriteString(" [")
+			sb.WriteString(strings.TrimSpace(item.Type))
+			sb.WriteByte(']')
+		}
+		if !item.SavedAt.IsZero() {
+			sb.WriteString(" saved_at=")
+			sb.WriteString(item.SavedAt.Format(time.RFC3339))
+		}
+		if original := strings.TrimSpace(item.OriginalName); original != "" && original != item.Name {
+			sb.WriteString(" original_name=")
+			sb.WriteString(original)
+		}
+		sb.WriteByte('\n')
+	}
 }

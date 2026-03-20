@@ -150,16 +150,18 @@ FEISHU_BOT_NAME="askplanner" \
 
 In group chats, the bot only handles text messages that are explicitly addressed to it. The most reliable setup is to configure `FEISHU_BOT_NAME` (defaults to `askplanner`) so the bot can verify that the mention target is actually itself by matching the `name` field in the mentions list.
 
-The bot can also receive `file` messages. It downloads the attachment to a local directory and tells Codex the local path so the agent can inspect the file directly. The default download directory is `.askplanner/lark-files/`; set `FEISHU_FILE_DIR=/tmp/askplanner-lark-files` if you want to place attachments under `/tmp`.
+The bot stores attachments in a persistent per-user library under `FEISHU_FILE_DIR`. Each sender gets a separate directory, and the library keeps at most `FEISHU_USER_FILE_MAX_ITEMS` top-level items (default `100`). When the limit is exceeded, the oldest top-level items are deleted first.
 
-If your bot is configured to receive only `@bot` messages in group chats, users can still send a file first and then send an `@bot` text message. The bot will look back through recent chat history, find the latest file message from the same user in the same chat/thread, download it, and include the local file path in the prompt sent to Codex. This requires the app to have permission to read recent group messages.
+In 1:1 chats, direct `file` and `image` uploads are downloaded and saved immediately. Images are renamed with a timestamped filename so users can distinguish them later. Uploading a file with the same top-level name replaces the existing item. Uploading a `.zip` file extracts it into a directory with the zip basename and removes the downloaded archive after a successful extraction.
 
-By default, recent-file lookup only activates when the `@bot` text contains file-related keywords such as `file`, `zip`, `replayer`, `文件`, or `附件`. The matching window is 10 minutes, and downloaded attachment directories older than that window are cleaned up automatically. You can tune both behaviors with environment variables.
+In group chats, attachment download is explicit. Users can send `@bot /download_3 analyze the latest files`, and the bot will walk backward through recent messages, download the newest three `file` or `image` attachments previously sent by the same sender in the same chat/thread, save them into that sender's library, and then answer the remaining question. If there is no trailing question, the bot replies with only the download summary.
 
-Both `file` and `image` attachments are downloaded to the workspace. Other message types (audio, video, sticker, etc.) are not yet supported.
+For every Codex request, the runtime injects the current user's library root path plus a compact top-level summary into the prompt. The model is instructed to inspect that directory directly and to ask the user which file they mean when the reference is ambiguous instead of guessing.
+
+Both `file` and `image` attachments are supported. Other message types (audio, video, sticker, etc.) are not yet supported.
 
 The bot computes a conversation key from:
-- `thread_id` when present
+- `thread_id + sender_id` when present
 - otherwise `chat_id + sender_id`
 - otherwise a message-level fallback
 
@@ -193,10 +195,8 @@ Lark-specific variables:
 | `FEISHU_APP_ID` | Yes | Feishu app ID |
 | `FEISHU_APP_SECRET` | Yes | Feishu app secret |
 | `FEISHU_BOT_NAME` | No | Bot display name used to match mentions in group chats; defaults to `askplanner` |
-| `FEISHU_FILE_DIR` | No | Local directory for downloaded Lark file attachments; defaults to `.askplanner/lark-files` |
-| `FEISHU_FILE_RETENTION_HOURS` | No | How long downloaded attachments are kept before cleanup; defaults to `24` (matches session TTL) |
-| `FEISHU_RECENT_FILE_WINDOW_MIN` | No | Recent-file lookup window in minutes; defaults to `10` |
-| `FEISHU_RECENT_FILE_KEYWORDS` | No | Comma-separated keywords that trigger recent-file lookup; defaults to `file,files,attachment,attachments,image,images,screenshot,zip,replayer,plan replayer,文件,附件,图片,截图,压缩包` |
+| `FEISHU_FILE_DIR` | No | Root directory of the persistent per-user Lark attachment library; defaults to `.askplanner/lark-files` |
+| `FEISHU_USER_FILE_MAX_ITEMS` | No | Maximum number of top-level items kept per user library; defaults to `100` |
 
 ## Build and Verify
 

@@ -30,14 +30,12 @@ type Config struct {
 	LogFile string // absolute path
 
 	// Lark (larkbot only)
-	FeishuAppID               string
-	FeishuAppSecret           string
-	FeishuBotName             string
-	FeishuDedupTimeoutInMin   int
-	FeishuFileDir             string // absolute path
-	FeishuFileRetentionHours  int
-	FeishuRecentFileWindowMin int
-	FeishuRecentFileKeywords  []string
+	FeishuAppID             string
+	FeishuAppSecret         string
+	FeishuBotName           string
+	FeishuDedupTimeoutInMin int
+	FeishuFileDir           string // absolute path
+	FeishuUserFileMaxItems  int
 }
 
 func Load() (*Config, error) {
@@ -47,41 +45,23 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		ProjectRoot:               projectRoot,
-		PromptFile:                resolvePath(projectRoot, envOrDefault("PROMPT_FILE", "prompt")),
-		CodexBin:                  envOrDefault("CODEX_BIN", "codex"),
-		CodexModel:                envOrDefault("CODEX_MODEL", "gpt-5.3-codex"),
-		CodexReasoningEffort:      envOrDefault("CODEX_REASONING_EFFORT", "medium"),
-		CodexSandbox:              envOrDefault("CODEX_SANDBOX", "read-only"),
-		CodexSessionStore:         resolvePath(projectRoot, envOrDefault("CODEX_SESSION_STORE", ".askplanner/sessions.json")),
-		CodexMaxTurns:             envAsInt("CODEX_MAX_TURNS", 30),
-		CodexSessionTTLHours:      envAsInt("CODEX_SESSION_TTL_HOURS", 24),
-		CodexTimeoutSec:           envAsInt("CODEX_TIMEOUT_SEC", 120),
-		LogFile:                   resolvePath(projectRoot, envOrDefault("LOG_FILE", ".askplanner/askplanner.log")),
-		FeishuAppID:               os.Getenv("FEISHU_APP_ID"),
-		FeishuAppSecret:           os.Getenv("FEISHU_APP_SECRET"),
-		FeishuBotName:             strings.ToLower(strings.TrimSpace(envOrDefault("FEISHU_BOT_NAME", "askplanner"))),
-		FeishuDedupTimeoutInMin:   envAsInt("FEISHU_DEDUP_MESSAGE_TIMEOUT_IN_MIN", 3600),
-		FeishuFileDir:             resolvePath(projectRoot, envOrDefault("FEISHU_FILE_DIR", ".askplanner/lark-files")),
-		FeishuFileRetentionHours:  envAsInt("FEISHU_FILE_RETENTION_HOURS", 24),
-		FeishuRecentFileWindowMin: envAsInt("FEISHU_RECENT_FILE_WINDOW_MIN", 10),
-		FeishuRecentFileKeywords: envAsCSV("FEISHU_RECENT_FILE_KEYWORDS", []string{
-			"file",
-			"files",
-			"attachment",
-			"attachments",
-			"image",
-			"images",
-			"screenshot",
-			"zip",
-			"replayer",
-			"plan replayer",
-			"文件",
-			"附件",
-			"图片",
-			"截图",
-			"压缩包",
-		}),
+		ProjectRoot:             projectRoot,
+		PromptFile:              resolvePath(projectRoot, envOrDefault("PROMPT_FILE", "prompt")),
+		CodexBin:                envOrDefault("CODEX_BIN", "codex"),
+		CodexModel:              envOrDefault("CODEX_MODEL", "gpt-5.3-codex"),
+		CodexReasoningEffort:    envOrDefault("CODEX_REASONING_EFFORT", "medium"),
+		CodexSandbox:            envOrDefault("CODEX_SANDBOX", "read-only"),
+		CodexSessionStore:       resolvePath(projectRoot, envOrDefault("CODEX_SESSION_STORE", ".askplanner/sessions.json")),
+		CodexMaxTurns:           envAsInt("CODEX_MAX_TURNS", 30),
+		CodexSessionTTLHours:    envAsInt("CODEX_SESSION_TTL_HOURS", 24),
+		CodexTimeoutSec:         envAsInt("CODEX_TIMEOUT_SEC", 120),
+		LogFile:                 resolvePath(projectRoot, envOrDefault("LOG_FILE", ".askplanner/askplanner.log")),
+		FeishuAppID:             os.Getenv("FEISHU_APP_ID"),
+		FeishuAppSecret:         os.Getenv("FEISHU_APP_SECRET"),
+		FeishuBotName:           strings.ToLower(strings.TrimSpace(envOrDefault("FEISHU_BOT_NAME", "askplanner"))),
+		FeishuDedupTimeoutInMin: envAsInt("FEISHU_DEDUP_MESSAGE_TIMEOUT_IN_MIN", 3600),
+		FeishuFileDir:           resolvePath(projectRoot, envOrDefault("FEISHU_FILE_DIR", ".askplanner/lark-files")),
+		FeishuUserFileMaxItems:  envAsInt("FEISHU_USER_FILE_MAX_ITEMS", 100),
 	}, nil
 }
 
@@ -123,27 +103,6 @@ func envAsInt(key string, defaultVal int) int {
 		return defaultVal
 	}
 	return n
-}
-
-func envAsCSV(key string, defaultVal []string) []string {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return append([]string(nil), defaultVal...)
-	}
-
-	parts := strings.Split(v, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		out = append(out, part)
-	}
-	if len(out) == 0 {
-		return append([]string(nil), defaultVal...)
-	}
-	return out
 }
 
 func SetupLogging(logFile string) (*os.File, error) {

@@ -15,7 +15,6 @@ type Responder struct {
 	store      *FileSessionStore
 	prompt     string
 	promptHash string
-	attachDir  string
 	maxTurns   int
 	sessionTTL time.Duration
 	timeout    time.Duration
@@ -43,7 +42,6 @@ func NewResponder(cfg *config.Config) (*Responder, error) {
 		store:      store,
 		prompt:     prompt,
 		promptHash: PromptHash(prompt),
-		attachDir:  strings.TrimSpace(cfg.FeishuFileDir),
 		maxTurns:   cfg.CodexMaxTurns,
 		sessionTTL: time.Duration(cfg.CodexSessionTTLHours) * time.Hour,
 		timeout:    time.Duration(cfg.CodexTimeoutSec) * time.Second,
@@ -51,6 +49,10 @@ func NewResponder(cfg *config.Config) (*Responder, error) {
 }
 
 func (r *Responder) Answer(ctx context.Context, conversationKey, question string) (string, error) {
+	return r.AnswerWithContext(ctx, conversationKey, question, AttachmentContext{})
+}
+
+func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, question string, attachment AttachmentContext) (string, error) {
 	if r.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, r.timeout)
@@ -61,7 +63,7 @@ func (r *Responder) Answer(ctx context.Context, conversationKey, question string
 	record, ok := r.store.Get(conversationKey)
 
 	if ok && r.canResume(record, now) {
-		result, err := r.runner.RunResume(ctx, record.SessionID, BuildResumePrompt(question, r.attachDir))
+		result, err := r.runner.RunResume(ctx, record.SessionID, BuildResumePrompt(question, attachment))
 		if err == nil {
 			record.LastActiveAt = now
 			record.TurnCount++
@@ -79,7 +81,7 @@ func (r *Responder) Answer(ctx context.Context, conversationKey, question string
 		log.Printf("[codex] resume failed for %s, starting a new session: %v", conversationKey, err)
 	}
 
-	initialPrompt := BuildInitialPrompt(r.prompt, summarizeTurns(record.Turns), question, r.attachDir)
+	initialPrompt := BuildInitialPrompt(r.prompt, summarizeTurns(record.Turns), question, attachment)
 	result, err := r.runner.RunNew(ctx, initialPrompt)
 	if err != nil {
 		return "", err
