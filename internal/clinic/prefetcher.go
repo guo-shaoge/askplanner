@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -46,6 +47,7 @@ func (p *Prefetcher) Enrich(ctx context.Context, question string, runtime codex.
 
 	spec, matched, err := ParseSlowQueryLink(question)
 	if err != nil {
+		log.Printf("[clinic] parse failed for potential slow query link: %v", err)
 		return runtime, &UserError{
 			Message: "I detected a Clinic slow query link but could not parse its cluster ID and time range. Please send the full share link from Clinic Slow Query.",
 			Cause:   err,
@@ -54,7 +56,17 @@ func (p *Prefetcher) Enrich(ctx context.Context, question string, runtime codex.
 	if !matched {
 		return runtime, nil
 	}
+	log.Printf("[clinic] parsed slow query link: cluster_id=%s start=%s end=%s digest=%s db=%s instance=%s url=%s",
+		spec.ClusterID,
+		spec.StartTime.UTC().Format(time.RFC3339),
+		spec.EndTime.UTC().Format(time.RFC3339),
+		spec.Digest,
+		spec.Database,
+		spec.Instance,
+		spec.RawURL,
+	)
 	if strings.TrimSpace(p.client.APIKey) == "" {
+		log.Printf("[clinic] prefetch skipped: CLINIC_API_KEY is empty for cluster_id=%s", spec.ClusterID)
 		return runtime, &UserError{
 			Message: "Clinic slow query auto-analysis is enabled, but `CLINIC_API_KEY` is not configured.",
 		}
@@ -62,6 +74,7 @@ func (p *Prefetcher) Enrich(ctx context.Context, question string, runtime codex.
 
 	analysis, err := p.client.FetchSlowQueryContext(ctx, *spec)
 	if err != nil {
+		log.Printf("[clinic] prefetch failed for cluster_id=%s url=%s: %v", spec.ClusterID, spec.RawURL, err)
 		msg := "Clinic slow query prefetch failed."
 		if strings.Contains(err.Error(), "auth failed") {
 			msg = "Clinic API authentication failed. Check `CLINIC_API_KEY` and verify the key can access clinic.pingcap.com."
@@ -71,6 +84,12 @@ func (p *Prefetcher) Enrich(ctx context.Context, question string, runtime codex.
 			Cause:   err,
 		}
 	}
+	log.Printf("[clinic] prefetch succeeded: cluster_id=%s total_queries=%d unique_digests=%d top_digests=%d",
+		analysis.ClusterID,
+		analysis.Summary.TotalQueries,
+		analysis.Summary.UniqueDigests,
+		len(analysis.TopDigests),
+	)
 
 	runtime.Clinic = &codex.ClinicContext{
 		SourceURL:   analysis.SourceURL,

@@ -2,6 +2,7 @@ package clinic
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -9,7 +10,11 @@ import (
 	"time"
 )
 
-var urlPattern = regexp.MustCompile(`https?://[^\s<>()]+`)
+var (
+	urlPattern       = regexp.MustCompile(`https?://[^\s<>()]+`)
+	nowFunc          = func() time.Time { return time.Now().UTC() }
+	detailTimeWindow = 5 * time.Minute
+)
 
 type LinkSpec struct {
 	RawURL    string
@@ -42,8 +47,8 @@ func parseSlowQueryURL(raw string) (*LinkSpec, bool, error) {
 	}
 
 	fragmentRoute, fragmentValues := parseFragment(u.Fragment)
-	pathJoined := strings.ToLower(strings.Join([]string{u.Path, fragmentRoute}, " "))
-	if !strings.Contains(pathJoined, "slowquery") && !strings.Contains(pathJoined, "slow-query") {
+	routeText := strings.ToLower(strings.Join([]string{u.Path, fragmentRoute}, " "))
+	if !isSlowQueryRoute(routeText) {
 		return nil, false, nil
 	}
 
@@ -59,16 +64,23 @@ func parseSlowQueryURL(raw string) (*LinkSpec, bool, error) {
 		Instance:  firstValue(values, "instance", "tidbAddr", "tidb_addr", "address", "node"),
 	}
 
-	start, err := parseFlexibleTime(firstValue(values, "startTime", "start", "from", "start_at", "startAt", "start_ts", "start_time"))
+	start, end, hasExplicitRange, err := parseTimeRange(values)
 	if err != nil {
-		return nil, true, fmt.Errorf("parse Clinic slow query start time: %w", err)
+		return nil, true, err
 	}
-	end, err := parseFlexibleTime(firstValue(values, "endTime", "end", "to", "end_at", "endAt", "end_ts", "end_time"))
-	if err != nil {
-		return nil, true, fmt.Errorf("parse Clinic slow query end time: %w", err)
+	if hasExplicitRange {
+		spec.StartTime = start
+		spec.EndTime = end
+	} else if isSlowQueryDetailRoute(routeText) {
+		at, err := parseDetailTimestamp(firstValue(values, "timestamp", "time"))
+		if err != nil {
+			return nil, true, err
+		}
+		if !at.IsZero() {
+			spec.StartTime = at.Add(-detailTimeWindow)
+			spec.EndTime = at.Add(detailTimeWindow)
+		}
 	}
-	spec.StartTime = start
-	spec.EndTime = end
 
 	switch {
 	case spec.ClusterID == "":
@@ -123,6 +135,98 @@ func firstValue(values url.Values, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func isSlowQueryRoute(route string) bool {
+	normalized := strings.NewReplacer("_", "", "-", "", "/", "", " ", "").Replace(strings.ToLower(route))
+	return strings.Contains(normalized, "slowquery")
+}
+
+func isSlowQueryDetailRoute(route string) bool {
+	return isSlowQueryRoute(route) && strings.Contains(strings.ToLower(route), "detail")
+}
+
+func parseTimeRange(values url.Values) (time.Time, time.Time, bool, error) {
+	startRaw := firstValue(values, "startTime", "start", "from", "start_at", "startAt", "start_ts", "start_time")
+	endRaw := firstValue(values, "endTime", "end", "to", "end_at", "endAt", "end_ts", "end_time")
+	if startRaw == "" && endRaw == "" {
+		return time.Time{}, time.Time{}, false, nil
+	}
+
+	if strings.EqualFold(strings.TrimSpace(endRaw), "now") {
+		end := nowFunc().UTC()
+		if startRaw == "" {
+			return time.Time{}, time.Time{}, true, fmt.Errorf("missing Clinic slow query start time")
+		}
+		if seconds, ok := parseRelativeSeconds(startRaw); ok {
+			return end.Add(-seconds), end, true, nil
+		}
+		start, err := parseFlexibleTime(startRaw)
+		if err != nil {
+			return time.Time{}, time.Time{}, true, fmt.Errorf("parse Clinic slow query start time: %w", err)
+		}
+		return start, end, true, nil
+	}
+
+	start, err := parseFlexibleTime(startRaw)
+	if err != nil {
+		return time.Time{}, time.Time{}, true, fmt.Errorf("parse Clinic slow query start time: %w", err)
+	}
+	end, err := parseFlexibleTime(endRaw)
+	if err != nil {
+		return time.Time{}, time.Time{}, true, fmt.Errorf("parse Clinic slow query end time: %w", err)
+	}
+	return start, end, true, nil
+}
+
+func parseRelativeSeconds(value string) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	if isLikelyAbsoluteTimestamp(value) {
+		return 0, false
+	}
+	seconds, err := strconv.ParseFloat(value, 64)
+	if err != nil || seconds < 0 {
+		return 0, false
+	}
+	return time.Duration(seconds * float64(time.Second)), true
+}
+
+func isLikelyAbsoluteTimestamp(value string) bool {
+	digits := value
+	if strings.Contains(digits, ".") {
+		parts := strings.SplitN(digits, ".", 2)
+		digits = parts[0]
+	}
+	if digits == "" {
+		return false
+	}
+	for _, ch := range digits {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return len(digits) >= 10
+}
+
+func parseDetailTimestamp(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+
+	if ts, err := parseFlexibleTime(value); err == nil && !ts.IsZero() {
+		return ts, nil
+	}
+
+	seconds, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse Clinic slow query detail timestamp: unsupported timestamp %q", value)
+	}
+	whole, fractional := math.Modf(seconds)
+	return time.Unix(int64(whole), int64(fractional*float64(time.Second))).UTC(), nil
 }
 
 func parseFlexibleTime(value string) (time.Time, error) {

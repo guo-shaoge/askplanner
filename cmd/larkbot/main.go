@@ -191,6 +191,8 @@ func handleEvent(ctx context.Context, apiClient *lark.Client, responder *codex.R
 	})
 	if err != nil {
 		if msg := clinic.UserFacingMessage(err); msg != "" {
+			log.Printf("[larkbot] clinic prefetch user-visible error: %v (message_id=%s, conversation=%s)",
+				err, extractMessageID(event), prepared.conversationKey)
 			return msg, nil
 		}
 		return "", err

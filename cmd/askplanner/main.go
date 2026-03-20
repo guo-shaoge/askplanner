@@ -69,6 +69,7 @@ func main() {
 		runtimeCtx, err := prefetcher.Enrich(ctx, question, codex.RuntimeContext{})
 		if err != nil {
 			if msg := clinic.UserFacingMessage(err); msg != "" {
+				log.Printf("[askplanner] clinic prefetch user-visible error: %v", err)
 				fmt.Printf("%s\n\n", msg)
 				continue
 			}
