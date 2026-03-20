@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,6 +22,52 @@ type Prefetcher struct {
 }
 
 const promptClinicLibraryLimit = 10
+
+var genericClinicLinkPhrases = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\bcan you see (this )?slow query link\b`),
+	regexp.MustCompile(`(?i)\bplease inspect\b`),
+	regexp.MustCompile(`(?i)\bcheck (this )?(clinic|slow query) link\b`),
+	regexp.MustCompile(`(?i)\bsee (this )?(clinic|slow query) link\b`),
+	regexp.MustCompile(`请帮我?(看|瞅)一下`),
+	regexp.MustCompile(`帮我?(看|瞅)下`),
+	regexp.MustCompile(`看下这个`),
+	regexp.MustCompile(`看看这个`),
+	regexp.MustCompile(`这个(慢查询|链接)`),
+}
+
+var clinicAnalysisIntentKeywords = []string{
+	"root cause",
+	"analy",
+	"bottleneck",
+	"optimiz",
+	"tune",
+	"why",
+	"how",
+	"what happened",
+	"explain",
+	"decoded_plan",
+	"decoded plan",
+	"binary_plan",
+	"binary plan",
+	"plan",
+	"sql",
+	"summary",
+	"suggestion",
+	"recommendation",
+	"原因",
+	"根因",
+	"分析",
+	"瓶颈",
+	"优化",
+	"调优",
+	"建议",
+	"执行计划",
+	"慢在哪里",
+	"为什么",
+	"怎么看",
+	"解释",
+	"摘要",
+}
 
 type EnrichResult struct {
 	RuntimeContext codex.RuntimeContext
@@ -132,10 +179,66 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 		return EnrichResult{RuntimeContext: runtime}, err
 	}
 	result := EnrichResult{RuntimeContext: runtime}
-	if strings.TrimSpace(spec.RawURL) != "" && !strings.EqualFold(previousURL, strings.TrimSpace(spec.RawURL)) {
+	if shouldReturnIntroReply(question, previousURL, spec) {
 		result.IntroReply = buildIntroReply(runtime)
 	}
 	return result, nil
+}
+
+func shouldReturnIntroReply(question, previousURL string, spec *LinkSpec) bool {
+	if spec == nil || strings.TrimSpace(spec.RawURL) == "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(previousURL), strings.TrimSpace(spec.RawURL)) {
+		return false
+	}
+	return !containsClinicAnalysisIntent(question)
+}
+
+func containsClinicAnalysisIntent(question string) bool {
+	withoutURLs := strings.TrimSpace(urlPattern.ReplaceAllString(question, " "))
+	normalized := strings.ToLower(strings.TrimSpace(strings.NewReplacer(
+		"\n", " ",
+		"\t", " ",
+		"“", " ",
+		"”", " ",
+		"'", " ",
+		"\"", " ",
+		"`", " ",
+		",", " ",
+		".", " ",
+		"!", " ",
+		"?", " ",
+		"？", " ",
+		"，", " ",
+		"。", " ",
+		"；", " ",
+		";", " ",
+		":", " ",
+		"：", " ",
+		"（", " ",
+		"）", " ",
+		"(", " ",
+		")", " ",
+	).Replace(withoutURLs)))
+	if normalized == "" {
+		return false
+	}
+	for _, pattern := range genericClinicLinkPhrases {
+		normalized = strings.TrimSpace(pattern.ReplaceAllString(normalized, " "))
+	}
+	if normalized == "" {
+		return false
+	}
+	if strings.Contains(question, "?") || strings.Contains(question, "？") {
+		return true
+	}
+	for _, keyword := range clinicAnalysisIntentKeywords {
+		if strings.Contains(normalized, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Prefetcher) saveAnalysis(userKey string, analysis *AnalysisContext) error {

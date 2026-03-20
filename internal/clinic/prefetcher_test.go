@@ -137,6 +137,43 @@ func TestPrefetcherReturnsIntroReplyForNewClinicLink(t *testing.T) {
 	}
 }
 
+func TestPrefetcherSkipsIntroReplyWhenQuestionIncludesAnalysisIntent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/clinic/api/v1/dashboard/clusters":
+			io.WriteString(w, `{"items":[{"clusterID":"123","clusterName":"prod-a","tenantName":"Acme","clusterDeployTypeV2":"premium"}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/data-proxy/query":
+			io.WriteString(w, `{"columns":["time","digest","plan_digest","query_time","parse_time","compile_time","cop_time","process_time","wait_time","total_keys","process_keys","result_rows","mem_max","disk_max","db","instance","index_names","prev_stmt","plan","decoded_plan","binary_plan","query"],"rows":[[1773973859.727374,"digest-1","plan-digest-1",7.5,0.1,0.2,2.5,1.5,0.3,1000,800,10,2048,0,"app","tidb-0","idx_a","begin","IndexLookUp_1 root 10.00","IndexLookUp(Build)","binary-plan-text","select * from t where a = 1"]]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	prefetcher, err := NewPrefetcher(&config.Config{
+		ClinicEnableAutoSlowQuery: true,
+		ClinicHTTPTimeoutSec:      5,
+		ClinicAPIKey:              "token",
+		ClinicStoreDir:            t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("NewPrefetcher: %v", err)
+	}
+	prefetcher.client.APIBaseURL = server.URL + "/clinic/api/v1"
+	prefetcher.client.DataProxyBase = server.URL
+
+	enriched, err := prefetcher.Enrich(context.Background(), "user-a", "show me the original decoded_plan of this slow query https://clinic.pingcap.com/#/slow_query/detail?clusterId=123&digest=digest-1&timestamp=1773973859.727374", codex.RuntimeContext{})
+	if err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+	if enriched.RuntimeContext.Clinic == nil {
+		t.Fatalf("expected clinic context")
+	}
+	if enriched.IntroReply != "" {
+		t.Fatalf("expected direct analysis path without intro reply, got %q", enriched.IntroReply)
+	}
+}
+
 func TestPartitionDatesSingleDay(t *testing.T) {
 	got := partitionDates(
 		time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC),
