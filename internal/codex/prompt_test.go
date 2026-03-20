@@ -72,12 +72,17 @@ func TestBuildInitialPromptIncludesClinicContext(t *testing.T) {
 				MaxQueryTime:  7.5,
 			},
 			TopDigests: []ClinicDigestSummary{{
-				Digest:         "digest-1",
-				ExecutionCount: 12,
-				AvgQueryTime:   1.2,
-				MaxQueryTime:   7.5,
-				MaxTotalKeys:   1000,
-				SampleSQL:      "select * from t where a = 1 order by b limit 10",
+				Digest:            "digest-1",
+				PlanDigest:        "plan-digest-1",
+				ExecutionCount:    12,
+				AvgQueryTime:      1.2,
+				MaxQueryTime:      7.5,
+				MaxTotalKeys:      1000,
+				SamplePrevStmt:    "set tidb_isolation_read_engines='tikv'",
+				SamplePlan:        "IndexLookUp_1 root 10.00",
+				SampleDecodedPlan: "IndexLookUp(Build) -> TableRowIDScan(Probe)",
+				SampleBinaryPlan:  "binary-plan-text",
+				SampleSQL:         "select * from t where a = 1 order by b limit 10",
 			}},
 		},
 	})
@@ -91,7 +96,12 @@ func TestBuildInitialPromptIncludesClinicContext(t *testing.T) {
 		"cluster_name=prod-a",
 		"org_name=Acme",
 		"digest=digest-1",
+		"plan_digest=plan-digest-1",
 		"sample_sql=select * from t where a = 1 order by b limit 10",
+		"sample_prev_stmt=set tidb_isolation_read_engines='tikv'",
+		"sample_plan=IndexLookUp_1 root 10.00",
+		"sample_decoded_plan=IndexLookUp(Build) -> TableRowIDScan(Probe)",
+		"sample_binary_plan=binary-plan-text",
 	}
 	for _, snippet := range wantSnippets {
 		if !strings.Contains(prompt, snippet) {

@@ -54,6 +54,7 @@ type Summary struct {
 type SlowQueryDetailRow struct {
 	TimeUnix    float64
 	Digest      string
+	PlanDigest  string
 	QueryTime   float64
 	ParseTime   float64
 	CompileTime float64
@@ -68,23 +69,32 @@ type SlowQueryDetailRow struct {
 	Database    string
 	Instance    string
 	Indexes     string
+	PrevStmt    string
+	Plan        string
+	DecodedPlan string
+	BinaryPlan  string
 	Query       string
 }
 
 type DigestSummary struct {
-	Digest         string
-	ExecutionCount int64
-	AvgQueryTime   float64
-	MaxQueryTime   float64
-	MaxTotalKeys   int64
-	MaxProcessKeys int64
-	MaxResultRows  int64
-	MaxMemBytes    int64
-	MaxDiskBytes   int64
-	SampleDB       string
-	SampleInstance string
-	SampleIndexes  string
-	SampleSQL      string
+	Digest            string
+	PlanDigest        string
+	ExecutionCount    int64
+	AvgQueryTime      float64
+	MaxQueryTime      float64
+	MaxTotalKeys      int64
+	MaxProcessKeys    int64
+	MaxResultRows     int64
+	MaxMemBytes       int64
+	MaxDiskBytes      int64
+	SampleDB          string
+	SampleInstance    string
+	SampleIndexes     string
+	SamplePrevStmt    string
+	SamplePlan        string
+	SampleDecodedPlan string
+	SampleBinaryPlan  string
+	SampleSQL         string
 }
 
 func NewClient(apiKey string, timeout time.Duration) *Client {
@@ -212,6 +222,7 @@ func (c *Client) queryDetailRows(ctx context.Context, spec LinkSpec) ([]SlowQuer
 		items = append(items, SlowQueryDetailRow{
 			TimeUnix:    float64Value(row["time"]),
 			Digest:      stringValue(row["digest"]),
+			PlanDigest:  stringValue(row["plan_digest"]),
 			QueryTime:   float64Value(row["query_time"]),
 			ParseTime:   float64Value(row["parse_time"]),
 			CompileTime: float64Value(row["compile_time"]),
@@ -226,6 +237,10 @@ func (c *Client) queryDetailRows(ctx context.Context, spec LinkSpec) ([]SlowQuer
 			Database:    stringValue(row["db"]),
 			Instance:    stringValue(row["instance"]),
 			Indexes:     stringValue(row["index_names"]),
+			PrevStmt:    stringValue(row["prev_stmt"]),
+			Plan:        stringValue(row["plan"]),
+			DecodedPlan: stringValue(row["decoded_plan"]),
+			BinaryPlan:  stringValue(row["binary_plan"]),
 			Query:       stringValue(row["query"]),
 		})
 	}
@@ -247,17 +262,22 @@ func (c *Client) queryTopDigests(ctx context.Context, spec LinkSpec) ([]DigestSu
 	items := make([]DigestSummary, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, DigestSummary{
-			Digest:         stringValue(row["digest"]),
-			ExecutionCount: int64Value(row["exec_count"]),
-			AvgQueryTime:   float64Value(row["avg_query_time"]),
-			MaxQueryTime:   float64Value(row["max_query_time"]),
-			MaxResultRows:  int64Value(row["max_result_rows"]),
-			MaxMemBytes:    int64Value(row["max_mem_bytes"]),
-			MaxDiskBytes:   int64Value(row["max_disk_bytes"]),
-			SampleDB:       stringValue(row["sample_db"]),
-			SampleInstance: stringValue(row["sample_instance"]),
-			SampleIndexes:  stringValue(row["sample_indexes"]),
-			SampleSQL:      stringValue(row["sample_sql"]),
+			Digest:            stringValue(row["digest"]),
+			PlanDigest:        stringValue(row["sample_plan_digest"]),
+			ExecutionCount:    int64Value(row["exec_count"]),
+			AvgQueryTime:      float64Value(row["avg_query_time"]),
+			MaxQueryTime:      float64Value(row["max_query_time"]),
+			MaxResultRows:     int64Value(row["max_result_rows"]),
+			MaxMemBytes:       int64Value(row["max_mem_bytes"]),
+			MaxDiskBytes:      int64Value(row["max_disk_bytes"]),
+			SampleDB:          stringValue(row["sample_db"]),
+			SampleInstance:    stringValue(row["sample_instance"]),
+			SampleIndexes:     stringValue(row["sample_indexes"]),
+			SamplePrevStmt:    stringValue(row["sample_prev_stmt"]),
+			SamplePlan:        stringValue(row["sample_plan"]),
+			SampleDecodedPlan: stringValue(row["sample_decoded_plan"]),
+			SampleBinaryPlan:  stringValue(row["sample_binary_plan"]),
+			SampleSQL:         stringValue(row["sample_sql"]),
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -355,6 +375,7 @@ func buildDetailRowsSQL(spec LinkSpec) string {
 	return fmt.Sprintf(`SELECT
   time,
   digest,
+  plan_digest,
   query_time,
   parse_time,
   compile_time,
@@ -369,6 +390,10 @@ func buildDetailRowsSQL(spec LinkSpec) string {
   db,
   instance,
   index_names,
+  prev_stmt,
+  plan,
+  decoded_plan,
+  binary_plan,
   query
 FROM "clinic_data_proxy"."slow_query_logs"
 WHERE %s
@@ -388,6 +413,11 @@ func buildTopDigestsSQL(spec LinkSpec) string {
   arbitrary(db) AS sample_db,
   arbitrary(instance) AS sample_instance,
   arbitrary(index_names) AS sample_indexes,
+  arbitrary(plan_digest) AS sample_plan_digest,
+  arbitrary(prev_stmt) AS sample_prev_stmt,
+  arbitrary(plan) AS sample_plan,
+  arbitrary(decoded_plan) AS sample_decoded_plan,
+  arbitrary(binary_plan) AS sample_binary_plan,
   arbitrary(query) AS sample_sql
 FROM "clinic_data_proxy"."slow_query_logs"
 WHERE %s

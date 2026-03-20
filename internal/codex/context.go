@@ -51,24 +51,30 @@ type ClinicSummary struct {
 }
 
 type ClinicDigestSummary struct {
-	Digest         string
-	ExecutionCount int64
-	AvgQueryTime   float64
-	MaxQueryTime   float64
-	MaxTotalKeys   int64
-	MaxProcessKeys int64
-	MaxResultRows  int64
-	MaxMemBytes    int64
-	MaxDiskBytes   int64
-	SampleDB       string
-	SampleInstance string
-	SampleIndexes  string
-	SampleSQL      string
+	Digest            string
+	PlanDigest        string
+	ExecutionCount    int64
+	AvgQueryTime      float64
+	MaxQueryTime      float64
+	MaxTotalKeys      int64
+	MaxProcessKeys    int64
+	MaxResultRows     int64
+	MaxMemBytes       int64
+	MaxDiskBytes      int64
+	SampleDB          string
+	SampleInstance    string
+	SampleIndexes     string
+	SamplePrevStmt    string
+	SamplePlan        string
+	SampleDecodedPlan string
+	SampleBinaryPlan  string
+	SampleSQL         string
 }
 
 type ClinicDetailRow struct {
 	TimeUnix    float64
 	Digest      string
+	PlanDigest  string
 	QueryTime   float64
 	ParseTime   float64
 	CompileTime float64
@@ -83,5 +89,9 @@ type ClinicDetailRow struct {
 	Database    string
 	Instance    string
 	Indexes     string
+	PrevStmt    string
+	Plan        string
+	DecodedPlan string
+	BinaryPlan  string
 	Query       string
 }

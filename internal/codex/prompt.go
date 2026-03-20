@@ -275,6 +275,10 @@ func writeClinicContext(sb *strings.Builder, clinic *ClinicContext) {
 				sb.WriteString(" db=")
 				sb.WriteString(row.Database)
 			}
+			if row.PlanDigest != "" {
+				sb.WriteString(" plan_digest=")
+				sb.WriteString(row.PlanDigest)
+			}
 			if row.Instance != "" {
 				sb.WriteString(" instance=")
 				sb.WriteString(row.Instance)
@@ -286,6 +290,22 @@ func writeClinicContext(sb *strings.Builder, clinic *ClinicContext) {
 			if row.Query != "" {
 				sb.WriteString(" query=")
 				sb.WriteString(compactText(row.Query, 240))
+			}
+			if row.PrevStmt != "" {
+				sb.WriteString(" prev_stmt=")
+				sb.WriteString(compactText(row.PrevStmt, 180))
+			}
+			if row.Plan != "" {
+				sb.WriteString(" plan=")
+				sb.WriteString(compactText(row.Plan, 240))
+			}
+			if row.DecodedPlan != "" {
+				sb.WriteString(" decoded_plan=")
+				sb.WriteString(compactText(row.DecodedPlan, 240))
+			}
+			if row.BinaryPlan != "" {
+				sb.WriteString(" binary_plan=")
+				sb.WriteString(compactText(row.BinaryPlan, 180))
 			}
 			sb.WriteByte('\n')
 		}
@@ -300,6 +320,10 @@ func writeClinicContext(sb *strings.Builder, clinic *ClinicContext) {
 	for _, item := range clinic.TopDigests {
 		sb.WriteString("  - digest=")
 		sb.WriteString(item.Digest)
+		if item.PlanDigest != "" {
+			sb.WriteString(" plan_digest=")
+			sb.WriteString(item.PlanDigest)
+		}
 		sb.WriteString(fmt.Sprintf(" exec_count=%d avg_sec=%.6f max_sec=%.6f",
 			item.ExecutionCount,
 			item.AvgQueryTime,
@@ -335,6 +359,22 @@ func writeClinicContext(sb *strings.Builder, clinic *ClinicContext) {
 		if item.SampleSQL != "" {
 			sb.WriteString(" sample_sql=")
 			sb.WriteString(compactText(item.SampleSQL, 240))
+		}
+		if item.SamplePrevStmt != "" {
+			sb.WriteString(" sample_prev_stmt=")
+			sb.WriteString(compactText(item.SamplePrevStmt, 180))
+		}
+		if item.SamplePlan != "" {
+			sb.WriteString(" sample_plan=")
+			sb.WriteString(compactText(item.SamplePlan, 240))
+		}
+		if item.SampleDecodedPlan != "" {
+			sb.WriteString(" sample_decoded_plan=")
+			sb.WriteString(compactText(item.SampleDecodedPlan, 240))
+		}
+		if item.SampleBinaryPlan != "" {
+			sb.WriteString(" sample_binary_plan=")
+			sb.WriteString(compactText(item.SampleBinaryPlan, 180))
 		}
 		sb.WriteByte('\n')
 	}

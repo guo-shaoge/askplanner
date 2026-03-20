@@ -49,7 +49,7 @@ func TestFetchSlowQueryContext(t *testing.T) {
 				io.WriteString(w, `{"columns":["total_queries","avg_query_time","max_query_time"],"rows":[[24,1.25,7.5]]}`)
 				return
 			}
-			io.WriteString(w, `{"columns":["digest","exec_count","avg_query_time","max_query_time","max_result_rows","max_mem_bytes","max_disk_bytes","sample_db","sample_instance","sample_indexes","sample_sql"],"rows":[["digest-1",12,1.2,7.5,10,2048,0,"app","tidb-0","idx_a","select * from t where a = 1"]]}`)
+			io.WriteString(w, `{"columns":["digest","exec_count","avg_query_time","max_query_time","max_result_rows","max_mem_bytes","max_disk_bytes","sample_db","sample_instance","sample_indexes","sample_plan_digest","sample_prev_stmt","sample_plan","sample_decoded_plan","sample_binary_plan","sample_sql"],"rows":[["digest-1",12,1.2,7.5,10,2048,0,"app","tidb-0","idx_a","plan-digest-1","set tidb_mem_quota_query=1073741824","IndexLookUp_1 root 10.00","IndexLookUp(Build) -> TableRowIDScan(Probe)","binary-plan-text","select * from t where a = 1"]]}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -75,6 +75,9 @@ func TestFetchSlowQueryContext(t *testing.T) {
 	if result.Summary.TotalQueries != 24 || len(result.TopDigests) != 1 {
 		t.Fatalf("unexpected query result: %+v", result)
 	}
+	if result.TopDigests[0].PlanDigest != "plan-digest-1" || result.TopDigests[0].SamplePlan == "" || result.TopDigests[0].SampleDecodedPlan == "" || result.TopDigests[0].SampleBinaryPlan == "" || result.TopDigests[0].SamplePrevStmt == "" {
+		t.Fatalf("expected plan fields in top digest: %+v", result.TopDigests[0])
+	}
 	if result.NoRows {
 		t.Fatalf("expected NoRows=false")
 	}
@@ -93,7 +96,7 @@ func TestFetchSlowQueryContextForDetailQuery(t *testing.T) {
 			if !strings.Contains(sql, "ORDER BY time DESC") {
 				t.Fatalf("expected detail SQL, got %s", sql)
 			}
-			io.WriteString(w, `{"columns":["time","digest","query_time","parse_time","compile_time","cop_time","process_time","wait_time","total_keys","process_keys","result_rows","mem_max","disk_max","db","instance","index_names","query"],"rows":[[1773973859.727374,"digest-1",7.5,0.1,0.2,2.5,1.5,0.3,1000,800,10,2048,0,"app","tidb-0","idx_a","select * from t where a = 1"]]}`)
+			io.WriteString(w, `{"columns":["time","digest","plan_digest","query_time","parse_time","compile_time","cop_time","process_time","wait_time","total_keys","process_keys","result_rows","mem_max","disk_max","db","instance","index_names","prev_stmt","plan","decoded_plan","binary_plan","query"],"rows":[[1773973859.727374,"digest-1","plan-digest-1",7.5,0.1,0.2,2.5,1.5,0.3,1000,800,10,2048,0,"app","tidb-0","idx_a","begin","IndexLookUp_1 root 10.00","IndexLookUp(Build) -> TableRowIDScan(Probe)","binary-plan-text","select * from t where a = 1"]]}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -121,6 +124,9 @@ func TestFetchSlowQueryContextForDetailQuery(t *testing.T) {
 	}
 	if len(result.DetailRows) != 1 || len(result.TopDigests) != 0 {
 		t.Fatalf("unexpected detail query result: %+v", result)
+	}
+	if result.DetailRows[0].PlanDigest != "plan-digest-1" || result.DetailRows[0].Plan == "" || result.DetailRows[0].DecodedPlan == "" || result.DetailRows[0].BinaryPlan == "" || result.DetailRows[0].PrevStmt != "begin" {
+		t.Fatalf("expected plan fields in detail row: %+v", result.DetailRows[0])
 	}
 	if result.Summary.TotalQueries != 1 || result.Summary.UniqueDigests != 1 {
 		t.Fatalf("unexpected detail summary: %+v", result.Summary)

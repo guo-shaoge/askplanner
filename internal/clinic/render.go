@@ -78,6 +78,10 @@ func BuildStoredSummary(analysis *AnalysisContext) string {
 				sb.WriteString(" digest=")
 				sb.WriteString(row.Digest)
 			}
+			if row.PlanDigest != "" {
+				sb.WriteString(" plan_digest=")
+				sb.WriteString(row.PlanDigest)
+			}
 			if row.Database != "" {
 				sb.WriteString(" db=")
 				sb.WriteString(row.Database)
@@ -89,6 +93,22 @@ func BuildStoredSummary(analysis *AnalysisContext) string {
 			if row.Query != "" {
 				sb.WriteString("\n  sql: ")
 				sb.WriteString(compactSummaryText(row.Query, 400))
+			}
+			if row.PrevStmt != "" {
+				sb.WriteString("\n  prev_stmt: ")
+				sb.WriteString(compactSummaryText(row.PrevStmt, 300))
+			}
+			if row.Plan != "" {
+				sb.WriteString("\n  plan: ")
+				sb.WriteString(compactSummaryText(row.Plan, 400))
+			}
+			if row.DecodedPlan != "" {
+				sb.WriteString("\n  decoded_plan: ")
+				sb.WriteString(compactSummaryText(row.DecodedPlan, 400))
+			}
+			if row.BinaryPlan != "" {
+				sb.WriteString("\n  binary_plan: ")
+				sb.WriteString(compactSummaryText(row.BinaryPlan, 300))
 			}
 			sb.WriteByte('\n')
 		}
@@ -108,6 +128,10 @@ func BuildStoredSummary(analysis *AnalysisContext) string {
 			item.AvgQueryTime,
 			item.MaxQueryTime,
 		))
+		if item.PlanDigest != "" {
+			sb.WriteString(" plan_digest=")
+			sb.WriteString(item.PlanDigest)
+		}
 		if item.SampleDB != "" {
 			sb.WriteString(" db=")
 			sb.WriteString(item.SampleDB)
@@ -119,6 +143,22 @@ func BuildStoredSummary(analysis *AnalysisContext) string {
 		if item.SampleSQL != "" {
 			sb.WriteString("\n  sample_sql: ")
 			sb.WriteString(compactSummaryText(item.SampleSQL, 400))
+		}
+		if item.SamplePrevStmt != "" {
+			sb.WriteString("\n  sample_prev_stmt: ")
+			sb.WriteString(compactSummaryText(item.SamplePrevStmt, 300))
+		}
+		if item.SamplePlan != "" {
+			sb.WriteString("\n  sample_plan: ")
+			sb.WriteString(compactSummaryText(item.SamplePlan, 400))
+		}
+		if item.SampleDecodedPlan != "" {
+			sb.WriteString("\n  sample_decoded_plan: ")
+			sb.WriteString(compactSummaryText(item.SampleDecodedPlan, 400))
+		}
+		if item.SampleBinaryPlan != "" {
+			sb.WriteString("\n  sample_binary_plan: ")
+			sb.WriteString(compactSummaryText(item.SampleBinaryPlan, 300))
 		}
 		sb.WriteByte('\n')
 	}
