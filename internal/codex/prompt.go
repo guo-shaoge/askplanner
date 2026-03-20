@@ -77,6 +77,7 @@ func writeAttachmentContext(sb *strings.Builder, attachment AttachmentContext) {
 	sb.WriteString(rootDir)
 	sb.WriteString("\n")
 	sb.WriteString("- If the user asks you to inspect or analyze a file, first inspect this user library.\n")
+	sb.WriteString("- In group chats, the user can load recent attachments into this library with `/upload_<n> your question`, for example `/upload_3 analyze these files`. If the user asks how to use that command, explain this format.\n")
 	sb.WriteString("- If you cannot tell which file the user means, do not guess. Use only the visible top-level entries below and ask the user which one to inspect.\n")
 
 	items := append([]AttachmentItem(nil), attachment.Items...)

@@ -26,7 +26,7 @@ import (
 
 const (
 	messagePageSize              = 50
-	maxDownloadCommandPages      = 20
+	maxUploadCommandPages        = 20
 	promptAttachmentSummaryLimit = 20
 )
 
@@ -47,7 +47,7 @@ type preparedReply struct {
 	conversationKey string
 }
 
-type downloadCommand struct {
+type uploadCommand struct {
 	count     int
 	remainder string
 	ok        bool
@@ -204,8 +204,11 @@ func prepareReply(ctx context.Context, apiClient *lark.Client, manager *attachme
 	switch extractMessageType(event) {
 	case "text":
 		text := extractTextMessage(event, trimPtr(event.Event.Message.Content))
-		command := parseDownloadCommand(text)
+		command := parseUploadCommand(text)
 		if command.ok {
+			if command.count > manager.MaxItems() {
+				command.count = manager.MaxItems()
+			}
 			summary, attachmentCtx, err := downloadRecentAttachments(ctx, apiClient, manager, event, userKey, command.count)
 			if err != nil {
 				return nil, err
@@ -423,25 +426,25 @@ func buildSaveSummary(verb, libraryDir string, results []attachments.SaveResult)
 	return strings.TrimSpace(sb.String())
 }
 
-func parseDownloadCommand(text string) downloadCommand {
+func parseUploadCommand(text string) uploadCommand {
 	text = strings.TrimSpace(text)
-	if !strings.HasPrefix(text, "/download_") {
-		return downloadCommand{}
+	if !strings.HasPrefix(text, "/upload_") {
+		return uploadCommand{}
 	}
-	rest := strings.TrimPrefix(text, "/download_")
+	rest := strings.TrimPrefix(text, "/upload_")
 	if rest == "" {
-		return downloadCommand{}
+		return uploadCommand{}
 	}
 	fields := strings.Fields(rest)
 	if len(fields) == 0 {
-		return downloadCommand{}
+		return uploadCommand{}
 	}
 	n, err := strconv.Atoi(fields[0])
 	if err != nil || n <= 0 {
-		return downloadCommand{}
+		return uploadCommand{}
 	}
 	remainder := strings.TrimSpace(strings.TrimPrefix(rest, fields[0]))
-	return downloadCommand{
+	return uploadCommand{
 		count:     n,
 		remainder: remainder,
 		ok:        true,
@@ -465,7 +468,7 @@ func findRecentAttachmentMessages(ctx context.Context, apiClient *lark.Client, e
 	pageToken := ""
 	refs := make([]attachmentRef, 0, count)
 
-	for page := 0; page < maxDownloadCommandPages && len(refs) < count; page++ {
+	for page := 0; page < maxUploadCommandPages && len(refs) < count; page++ {
 		req := larkim.NewListMessageReqBuilder().
 			ContainerIdType("chat").
 			ContainerId(chatID).

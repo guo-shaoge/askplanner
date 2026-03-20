@@ -154,7 +154,7 @@ The bot stores attachments in a persistent per-user library under `FEISHU_FILE_D
 
 In 1:1 chats, direct `file` and `image` uploads are downloaded and saved immediately. Images are renamed with a timestamped filename so users can distinguish them later. Uploading a file with the same top-level name replaces the existing item. Uploading a `.zip` file extracts it into a directory with the zip basename and removes the downloaded archive after a successful extraction.
 
-In group chats, attachment download is explicit. Users can send `@bot /download_3 analyze the latest files`, and the bot will walk backward through recent messages, download the newest three `file` or `image` attachments previously sent by the same sender in the same chat/thread, save them into that sender's library, and then answer the remaining question. If there is no trailing question, the bot replies with only the download summary.
+In group chats, attachment loading is explicit. Users can send `@bot /upload_3 analyze the latest files`, and the bot will walk backward through recent messages, download the newest three `file` or `image` attachments previously sent by the same sender in the same chat/thread, save them into that sender's library, and then answer the remaining question. If there is no trailing question, the bot replies with only the download summary.
 
 For every Codex request, the runtime injects the current user's library root path plus a compact top-level summary into the prompt. The model is instructed to inspect that directory directly and to ask the user which file they mean when the reference is ambiguous instead of guessing.
 

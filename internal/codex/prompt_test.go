@@ -27,6 +27,7 @@ func TestBuildInitialPromptIncludesAttachmentContext(t *testing.T) {
 
 	wantSnippets := []string{
 		"The current user's uploaded-file library is stored under: /tmp/user-a",
+		"/upload_3 analyze these files",
 		"If you cannot tell which file the user means, do not guess.",
 		"report.sql [file] saved_at=2026-03-20T10:00:00Z",
 		"image_20260320_090000_om1.png [image] saved_at=2026-03-20T09:00:00Z",

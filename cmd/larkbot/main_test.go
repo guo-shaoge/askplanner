@@ -6,8 +6,8 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-func TestParseDownloadCommand(t *testing.T) {
-	cmd := parseDownloadCommand("/download_3 analyze these files")
+func TestParseUploadCommand(t *testing.T) {
+	cmd := parseUploadCommand("/upload_3 analyze these files")
 	if !cmd.ok {
 		t.Fatalf("expected command to parse")
 	}
@@ -18,7 +18,7 @@ func TestParseDownloadCommand(t *testing.T) {
 		t.Fatalf("remainder = %q", cmd.remainder)
 	}
 
-	if bad := parseDownloadCommand("/download_x test"); bad.ok {
+	if bad := parseUploadCommand("/upload_x test"); bad.ok {
 		t.Fatalf("expected invalid command to be rejected")
 	}
 }

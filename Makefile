@@ -5,6 +5,7 @@ cli:
 
 larkbot:
 	go build -o bin/askplanner_larkbot ./cmd/larkbot
+	go build -o bin/askplanner_larkbot_staging ./cmd/larkbot
 
 clean:
 	rm -f bin/askplanner_cli bin/askplanner_larkbot
