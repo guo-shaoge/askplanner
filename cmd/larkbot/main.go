@@ -175,14 +175,15 @@ func main() {
 					answer = "Agent Error: " + err.Error()
 				}
 
-			reply, err := buildReplyBody(answer)
-			if err != nil {
-				return fmt.Errorf("build reply body: %w", err)
-			}
-			if err := replyMessage(ctx, apiClient, messageID, reply); err != nil {
-				return fmt.Errorf("reply message: %w", err)
-			}
-			return nil
+				reply, err := buildReplyBody(answer)
+				if err != nil {
+					return fmt.Errorf("build reply body: %w", err)
+				}
+				if err := replyMessage(ctx, apiClient, messageID, reply); err != nil {
+					return fmt.Errorf("reply message: %w", err)
+				}
+				return nil
+			})
 		})
 
 	cli := larkws.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret,
