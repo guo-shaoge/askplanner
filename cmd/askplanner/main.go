@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	"lab/askplanner/internal/clinic"
 	"lab/askplanner/internal/codex"
@@ -93,6 +94,7 @@ func main() {
 		}
 
 		fmt.Println()
+		start := time.Now()
 		ws, err := workspaceManager.Ensure(ctx, clinicUserKey)
 		if err != nil {
 			fmt.Printf("Error: %v\n\n", err)
@@ -120,6 +122,7 @@ func main() {
 			fmt.Printf("Error: %v\n\n", err)
 			continue
 		}
+		log.Printf("[askplanner] request done conversation=%s elapsed=%s", conversationKey, time.Since(start))
 
 		fmt.Println()
 		fmt.Println(answer)
@@ -128,6 +131,7 @@ func main() {
 }
 
 func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, responder *codex.Responder, prefetcher *clinic.Prefetcher, conversationKey, userKey string, cmd *workspace.Command) (string, error) {
+	start := time.Now()
 	var (
 		ws  *workspace.Workspace
 		err error
@@ -167,5 +171,6 @@ func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, respon
 	if err != nil {
 		return "", err
 	}
+	log.Printf("[askplanner] workspace command answered conversation=%s action=%s elapsed=%s", conversationKey, cmd.Action, time.Since(start))
 	return status + "\n\n" + answer, nil
 }

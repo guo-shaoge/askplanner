@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Runner struct {
@@ -57,6 +58,7 @@ func (r *Runner) RunResume(ctx context.Context, workDir, sessionID, prompt strin
 }
 
 func (r *Runner) run(ctx context.Context, workDir string, optionArgs, positionalArgs []string, prompt string, skipLogPrompt bool) (*RunResult, error) {
+	start := time.Now()
 	replyFile, err := os.CreateTemp("", "askplanner-codex-reply-*.txt")
 	if err != nil {
 		return nil, fmt.Errorf("create temp reply file: %w", err)
@@ -74,9 +76,9 @@ func (r *Runner) run(ctx context.Context, workDir string, optionArgs, positional
 	args = append(args, "-")
 
 	if !skipLogPrompt {
-		log.Printf("[codex] running: %s %s, prompt: %s", r.Bin, strings.Join(args, " "), compactText(prompt, 1000))
+		log.Printf("[codex] running: %s %s workdir=%s prompt: %s", r.Bin, strings.Join(args, " "), workDir, compactText(prompt, 1000))
 	} else {
-		log.Printf("[codex] running: %s %s, prompt: (omitted)", r.Bin, strings.Join(args, " "))
+		log.Printf("[codex] running: %s %s workdir=%s prompt: (omitted)", r.Bin, strings.Join(args, " "), workDir)
 	}
 
 	cmd := exec.CommandContext(ctx, r.Bin, args...)
@@ -129,7 +131,7 @@ func (r *Runner) run(ctx context.Context, workDir string, optionArgs, positional
 		)
 	}
 
-	log.Printf("[codex] success (session=%s, answer_len=%d)", result.SessionID, len(result.Answer))
+	log.Printf("[codex] success (session=%s, answer_len=%d, elapsed=%s)", result.SessionID, len(result.Answer), time.Since(start))
 	return result, nil
 }
 

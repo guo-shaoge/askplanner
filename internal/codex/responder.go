@@ -54,6 +54,7 @@ func (r *Responder) Answer(ctx context.Context, conversationKey, question string
 }
 
 func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, question string, runtime RuntimeContext) (string, error) {
+	start := time.Now()
 	if r.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, r.timeout)
@@ -64,8 +65,12 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 	record, ok := r.store.Get(conversationKey)
 	workDir := r.workDirForRuntime(runtime)
 	envHash := r.environmentHashForRuntime(runtime, workDir)
+	log.Printf("[codex] answer start conversation=%s question_len=%d workdir=%s env=%s session_found=%t",
+		conversationKey, len(strings.TrimSpace(question)), workDir, compactText(envHash, 12), ok)
 
-	if ok && r.canResume(record, now, workDir, envHash) {
+	canResume, resumeReason := r.canResume(record, now, workDir, envHash)
+	if ok && canResume {
+		log.Printf("[codex] resume eligible conversation=%s session=%s", conversationKey, record.SessionID)
 		result, err := r.runner.RunResume(ctx, workDir, record.SessionID, BuildResumePrompt(question, runtime))
 		if err == nil {
 			record.LastActiveAt = now
@@ -75,6 +80,7 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 			if err := r.store.Put(record); err != nil {
 				return "", err
 			}
+			log.Printf("[codex] answer done conversation=%s mode=resume elapsed=%s", conversationKey, time.Since(start))
 			return result.Answer, nil
 		}
 		record.LastError = err.Error()
@@ -82,6 +88,8 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 			log.Printf("[codex] persist resume failure for %s: %v", conversationKey, saveErr)
 		}
 		log.Printf("[codex] resume failed for %s, starting a new session: %v", conversationKey, err)
+	} else if ok {
+		log.Printf("[codex] resume skipped for %s: %s", conversationKey, resumeReason)
 	}
 
 	initialPrompt := BuildInitialPrompt(r.prompt, summarizeTurns(record.Turns), question, runtime)
@@ -111,6 +119,8 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 	if err := r.store.Put(record); err != nil {
 		return "", err
 	}
+	log.Printf("[codex] answer done conversation=%s mode=new session=%s elapsed=%s",
+		conversationKey, result.SessionID, time.Since(start))
 	return result.Answer, nil
 }
 
@@ -118,26 +128,26 @@ func (r *Responder) Reset(conversationKey string) error {
 	return r.store.Delete(conversationKey)
 }
 
-func (r *Responder) canResume(record SessionRecord, now time.Time, workDir, envHash string) bool {
+func (r *Responder) canResume(record SessionRecord, now time.Time, workDir, envHash string) (bool, string) {
 	if strings.TrimSpace(record.SessionID) == "" {
-		return false
+		return false, "empty_session_id"
 	}
 	if record.PromptHash != r.promptHash {
-		return false
+		return false, "prompt_hash_changed"
 	}
 	if record.WorkDir != workDir {
-		return false
+		return false, "workdir_changed"
 	}
 	if strings.TrimSpace(record.EnvironmentHash) != strings.TrimSpace(envHash) {
-		return false
+		return false, "environment_changed"
 	}
 	if r.maxTurns > 0 && record.TurnCount >= r.maxTurns {
-		return false
+		return false, "max_turns_reached"
 	}
 	if r.sessionTTL > 0 && now.Sub(record.LastActiveAt) > r.sessionTTL {
-		return false
+		return false, "session_ttl_expired"
 	}
-	return true
+	return true, "ok"
 }
 
 func (r *Responder) workDirForRuntime(runtime RuntimeContext) string {

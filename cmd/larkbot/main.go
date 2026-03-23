@@ -205,6 +205,7 @@ func main() {
 }
 
 func handleEvent(ctx context.Context, apiClient *lark.Client, responder *codex.Responder, prefetcher *clinic.Prefetcher, manager *attachments.Manager, workspaceManager *workspace.Manager, event *larkim.P2MessageReceiveV1) (string, error) {
+	start := time.Now()
 	prepared, err := prepareReply(ctx, apiClient, manager, event)
 	if err != nil {
 		return "", err
@@ -250,6 +251,8 @@ func handleEvent(ctx context.Context, apiClient *lark.Client, responder *codex.R
 	if err != nil {
 		return "", err
 	}
+	log.Printf("[larkbot] handle event done message_id=%s conversation=%s elapsed=%s",
+		extractMessageID(event), prepared.conversationKey, time.Since(start))
 	if strings.TrimSpace(prepared.prefix) != "" {
 		return prepared.prefix + "\n\n" + answer, nil
 	}
@@ -334,6 +337,7 @@ func prepareReply(ctx context.Context, apiClient *lark.Client, manager *attachme
 }
 
 func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, responder *codex.Responder, prefetcher *clinic.Prefetcher, prepared *preparedReply) (string, error) {
+	start := time.Now()
 	var (
 		ws  *workspace.Workspace
 		err error
@@ -375,6 +379,8 @@ func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, respon
 	if err != nil {
 		return "", err
 	}
+	log.Printf("[larkbot] workspace command answered conversation=%s action=%s elapsed=%s",
+		prepared.conversationKey, prepared.workspaceCmd.Action, time.Since(start))
 	return status + "\n\n" + answer, nil
 }
 

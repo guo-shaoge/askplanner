@@ -136,6 +136,11 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 }
 
 func (m *Manager) Ensure(ctx context.Context, userKey string) (*Workspace, error) {
+	start := time.Now()
+	log.Printf("[workspace] ensure start user=%s", sanitizePathSegment(userKey, ""))
+	defer func() {
+		log.Printf("[workspace] ensure done user=%s elapsed=%s", sanitizePathSegment(userKey, ""), time.Since(start))
+	}()
 	if err := m.syncAgentRulesMirrorIfDue(ctx); err != nil {
 		log.Printf("[workspace] scheduled agent-rules sync failed: %v", err)
 	}
@@ -152,6 +157,11 @@ func (m *Manager) Status(ctx context.Context, userKey string) (*Workspace, error
 }
 
 func (m *Manager) SwitchRepo(ctx context.Context, userKey, repoName, ref string) (*Workspace, error) {
+	start := time.Now()
+	log.Printf("[workspace] switch start user=%s repo=%s ref=%s", sanitizePathSegment(userKey, ""), repoName, ref)
+	defer func() {
+		log.Printf("[workspace] switch done user=%s repo=%s ref=%s elapsed=%s", sanitizePathSegment(userKey, ""), repoName, ref, time.Since(start))
+	}()
 	spec, ok := m.repos[repoName]
 	if !ok {
 		return nil, fmt.Errorf("unsupported workspace repo: %s", repoName)
@@ -215,6 +225,11 @@ func (m *Manager) SwitchRepo(ctx context.Context, userKey, repoName, ref string)
 }
 
 func (m *Manager) Sync(ctx context.Context, userKey, repoName string) (*Workspace, error) {
+	start := time.Now()
+	log.Printf("[workspace] sync start user=%s repo=%s", sanitizePathSegment(userKey, ""), repoName)
+	defer func() {
+		log.Printf("[workspace] sync done user=%s repo=%s elapsed=%s", sanitizePathSegment(userKey, ""), repoName, time.Since(start))
+	}()
 	lock, userKey, err := m.lockUser(userKey, false)
 	if err != nil {
 		return nil, err
@@ -260,6 +275,11 @@ func (m *Manager) Sync(ctx context.Context, userKey, repoName string) (*Workspac
 }
 
 func (m *Manager) Reset(ctx context.Context, userKey, repoName string) (*Workspace, error) {
+	start := time.Now()
+	log.Printf("[workspace] reset start user=%s repo=%s", sanitizePathSegment(userKey, ""), repoName)
+	defer func() {
+		log.Printf("[workspace] reset done user=%s repo=%s elapsed=%s", sanitizePathSegment(userKey, ""), repoName, time.Since(start))
+	}()
 	lock, userKey, err := m.lockUser(userKey, false)
 	if err != nil {
 		return nil, err
@@ -313,6 +333,7 @@ func (m *Manager) MaybeSweep(ctx context.Context) error {
 }
 
 func (m *Manager) Sweep(ctx context.Context) error {
+	start := time.Now()
 	lockPath := filepath.Join(m.locksDir, "gc.lock")
 	lock, err := acquireFileLock(lockPath, true)
 	if err != nil {
@@ -332,14 +353,17 @@ func (m *Manager) Sweep(ctx context.Context) error {
 	}
 
 	now := time.Now().UTC()
+	var scanned, deleted, skippedBusy, skippedFresh int
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
+		scanned++
 		userKey := entry.Name()
 		lock, _, err := m.lockUser(userKey, true)
 		if err != nil {
 			if errors.Is(err, errLockBusy) {
+				skippedBusy++
 				continue
 			}
 			return err
@@ -359,6 +383,7 @@ func (m *Manager) Sweep(ctx context.Context) error {
 			lastActive = meta.LastActiveAt
 		}
 		if m.idleTTL > 0 && !lastActive.IsZero() && now.Sub(lastActive) <= m.idleTTL {
+			skippedFresh++
 			lock.Close()
 			continue
 		}
@@ -366,8 +391,11 @@ func (m *Manager) Sweep(ctx context.Context) error {
 			lock.Close()
 			return err
 		}
+		deleted++
 		lock.Close()
 	}
+	log.Printf("[workspace] gc sweep done scanned=%d deleted=%d skipped_busy=%d skipped_fresh=%d elapsed=%s",
+		scanned, deleted, skippedBusy, skippedFresh, time.Since(start))
 	return nil
 }
 
@@ -438,6 +466,9 @@ func (m *Manager) ensureLocked(ctx context.Context, userKey string) (*Workspace,
 		if spec.TrackLatest && state.TrackingLatest {
 			state.RequestedRef = spec.DefaultRef
 		}
+		repoStart := time.Now()
+		log.Printf("[workspace] repo ensure start user=%s repo=%s requested_ref=%s current_sha=%s",
+			userKey, spec.Name, state.RequestedRef, shortSHAForLog(state.ResolvedSHA))
 		if err := m.ensureMirror(ctx, spec); err != nil {
 			return nil, err
 		}
@@ -451,12 +482,18 @@ func (m *Manager) ensureLocked(ctx context.Context, userKey string) (*Workspace,
 			}
 			state.ResolvedSHA = sha
 			state.LastSyncedAt = now
+			log.Printf("[workspace] repo ensure updated user=%s repo=%s requested_ref=%s resolved_sha=%s elapsed=%s",
+				userKey, spec.Name, state.RequestedRef, shortSHAForLog(state.ResolvedSHA), time.Since(repoStart))
+			continue
 		}
+		log.Printf("[workspace] repo ensure cache-hit user=%s repo=%s requested_ref=%s resolved_sha=%s elapsed=%s",
+			userKey, spec.Name, state.RequestedRef, shortSHAForLog(sha), time.Since(repoStart))
 	}
 	return m.finalizeLocked(meta, dirs)
 }
 
 func (m *Manager) finalizeLocked(meta *workspaceMetadata, dirs workspaceDirs) (*Workspace, error) {
+	start := time.Now()
 	meta.LastActiveAt = time.Now().UTC()
 	meta.EnvironmentHash = computeEnvironmentHash(dirs.rootDir, meta.Repos)
 	if err := saveMetadataFile(dirs.metaPath, meta); err != nil {
@@ -471,14 +508,17 @@ func (m *Manager) finalizeLocked(meta *workspaceMetadata, dirs workspaceDirs) (*
 		}
 		repos = append(repos, *state)
 	}
-	return &Workspace{
+	ws := &Workspace{
 		UserKey:         meta.UserKey,
 		RootDir:         dirs.rootDir,
 		UserFilesDir:    filepath.Join(dirs.rootDir, "user-files"),
 		ClinicFilesDir:  filepath.Join(dirs.rootDir, "clinic-files"),
 		EnvironmentHash: meta.EnvironmentHash,
 		Repos:           repos,
-	}, nil
+	}
+	log.Printf("[workspace] finalize user=%s env=%s repos=%d elapsed=%s",
+		meta.UserKey, shortSHAForLog(meta.EnvironmentHash), len(repos), time.Since(start))
+	return ws, nil
 }
 
 type workspaceDirs struct {
@@ -491,6 +531,7 @@ type workspaceDirs struct {
 }
 
 func (m *Manager) ensureMetadata(userKey string) (*workspaceMetadata, workspaceDirs, error) {
+	start := time.Now()
 	userKey = sanitizePathSegment(userKey, "")
 	if userKey == "" {
 		return nil, workspaceDirs{}, fmt.Errorf("workspace user key is empty")
@@ -530,6 +571,8 @@ func (m *Manager) ensureMetadata(userKey string) (*workspaceMetadata, workspaceD
 		meta.Repos = make(map[string]*RepoState)
 	}
 	meta.UserKey = userKey
+	log.Printf("[workspace] metadata ready user=%s root=%s uploads=%s clinic=%s elapsed=%s",
+		userKey, dirs.rootDir, dirs.uploadsDir, dirs.clinicDir, time.Since(start))
 	return meta, dirs, nil
 }
 
@@ -544,14 +587,18 @@ func (m *Manager) checkoutPath(rootDir string, spec RepoSpec) string {
 func (m *Manager) ensureMirror(ctx context.Context, spec RepoSpec) error {
 	mirrorPath := m.mirrorPath(spec)
 	if _, err := os.Stat(filepath.Join(mirrorPath, "HEAD")); err == nil {
+		log.Printf("[workspace] mirror hit repo=%s path=%s", spec.Name, mirrorPath)
 		return nil
 	}
+	start := time.Now()
+	log.Printf("[workspace] mirror clone start repo=%s remote=%s path=%s", spec.Name, spec.RemoteURL, mirrorPath)
 	if err := os.MkdirAll(filepath.Dir(mirrorPath), 0o755); err != nil {
 		return fmt.Errorf("create mirror parent dir: %w", err)
 	}
 	if _, err := runGit(ctx, "", "clone", "--mirror", spec.RemoteURL, mirrorPath); err != nil {
 		return fmt.Errorf("clone mirror for %s: %w", spec.Name, err)
 	}
+	log.Printf("[workspace] mirror clone done repo=%s path=%s elapsed=%s", spec.Name, mirrorPath, time.Since(start))
 	return nil
 }
 
@@ -559,10 +606,13 @@ func (m *Manager) fetchMirror(ctx context.Context, spec RepoSpec) error {
 	if err := m.ensureMirror(ctx, spec); err != nil {
 		return err
 	}
+	start := time.Now()
+	log.Printf("[workspace] mirror fetch start repo=%s", spec.Name)
 	_, err := runGit(ctx, "", "--git-dir", m.mirrorPath(spec), "fetch", "--prune", "--tags", "origin", "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*")
 	if err != nil {
 		return fmt.Errorf("fetch mirror for %s: %w", spec.Name, err)
 	}
+	log.Printf("[workspace] mirror fetch done repo=%s elapsed=%s", spec.Name, time.Since(start))
 	return nil
 }
 
@@ -570,6 +620,7 @@ func (m *Manager) resolveRef(ctx context.Context, spec RepoSpec, ref string) (st
 	if err := m.ensureMirror(ctx, spec); err != nil {
 		return "", err
 	}
+	start := time.Now()
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		ref = spec.DefaultRef
@@ -588,6 +639,8 @@ func (m *Manager) resolveRef(ctx context.Context, spec RepoSpec, ref string) (st
 		seen[candidate] = struct{}{}
 		out, err := runGit(ctx, "", "--git-dir", m.mirrorPath(spec), "rev-parse", "--verify", candidate)
 		if err == nil {
+			log.Printf("[workspace] resolve ref done repo=%s ref=%s resolved_sha=%s elapsed=%s",
+				spec.Name, ref, shortSHAForLog(strings.TrimSpace(out)), time.Since(start))
 			return strings.TrimSpace(out), nil
 		}
 	}
@@ -595,18 +648,23 @@ func (m *Manager) resolveRef(ctx context.Context, spec RepoSpec, ref string) (st
 }
 
 func (m *Manager) ensureCheckout(ctx context.Context, spec RepoSpec, rootDir, sha string) error {
+	start := time.Now()
 	checkoutPath := m.checkoutPath(rootDir, spec)
 	if err := os.MkdirAll(filepath.Dir(checkoutPath), 0o755); err != nil {
 		return fmt.Errorf("create checkout parent dir: %w", err)
 	}
 	if isGitWorktree(checkoutPath) {
+		log.Printf("[workspace] checkout update start repo=%s path=%s sha=%s", spec.Name, checkoutPath, shortSHAForLog(sha))
 		_, err := runGit(ctx, checkoutPath, "checkout", "--detach", "--force", sha)
 		if err != nil {
 			return fmt.Errorf("checkout %s at %s: %w", spec.Name, sha, err)
 		}
+		log.Printf("[workspace] checkout update done repo=%s path=%s sha=%s elapsed=%s",
+			spec.Name, checkoutPath, shortSHAForLog(sha), time.Since(start))
 		return nil
 	}
 
+	log.Printf("[workspace] checkout create start repo=%s path=%s sha=%s", spec.Name, checkoutPath, shortSHAForLog(sha))
 	if err := os.RemoveAll(checkoutPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove stale checkout %s: %w", checkoutPath, err)
 	}
@@ -615,6 +673,8 @@ func (m *Manager) ensureCheckout(ctx context.Context, spec RepoSpec, rootDir, sh
 	if err != nil {
 		return fmt.Errorf("create worktree for %s: %w", spec.Name, err)
 	}
+	log.Printf("[workspace] checkout create done repo=%s path=%s sha=%s elapsed=%s",
+		spec.Name, checkoutPath, shortSHAForLog(sha), time.Since(start))
 	return nil
 }
 
@@ -648,11 +708,15 @@ func (m *Manager) syncAgentRulesMirrorIfDue(ctx context.Context) error {
 	}
 	m.lastAgentRulesSync = time.Now()
 	m.mu.Unlock()
+	log.Printf("[workspace] scheduled agent-rules sync triggered")
 	return m.syncAgentRulesMirror(ctx)
 }
 
 func (m *Manager) syncAgentRulesMirror(ctx context.Context) error {
-	return m.fetchMirror(ctx, m.repos["agent-rules"])
+	start := time.Now()
+	err := m.fetchMirror(ctx, m.repos["agent-rules"])
+	log.Printf("[workspace] agent-rules sync done elapsed=%s err=%v", time.Since(start), err)
+	return err
 }
 
 type fileLock struct {
@@ -866,4 +930,12 @@ func isLikelyCommitSHA(ref string) bool {
 		}
 	}
 	return true
+}
+
+func shortSHAForLog(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }
