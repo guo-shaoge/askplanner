@@ -108,6 +108,38 @@ func TestSweepRemovesExpiredWorkspace(t *testing.T) {
 	}
 }
 
+func TestResetUserRemovesWorkspaceAndStateDirs(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	tidb := createTestRemote(t, root, "tidb", "main", nil)
+	docs := createTestRemote(t, root, "docs", "main", nil)
+	agent := createTestRemote(t, root, "agent-rules", "main", nil)
+
+	manager := newTestManager(t, root, tidb.remotePath, docs.remotePath, agent.remotePath)
+	ws, err := manager.Ensure(ctx, "ou_reset-user")
+	if err != nil {
+		t.Fatalf("ensure workspace: %v", err)
+	}
+
+	resetRoot, err := manager.ResetUser(ctx, "ou_reset-user")
+	if err != nil {
+		t.Fatalf("reset user: %v", err)
+	}
+	if resetRoot != ws.RootDir {
+		t.Fatalf("reset root = %q, want %q", resetRoot, ws.RootDir)
+	}
+	for _, path := range []string{
+		ws.RootDir,
+		filepath.Join(manager.usersDir, "ou_reset-user"),
+		filepath.Join(manager.uploadRoot, "ou_reset-user"),
+		filepath.Join(manager.clinicRoot, "ou_reset-user"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("path still exists after reset: %s err=%v", path, err)
+		}
+	}
+}
+
 func findRepo(ws *Workspace, name string) RepoState {
 	for _, repo := range ws.Repos {
 		if repo.Name == name {

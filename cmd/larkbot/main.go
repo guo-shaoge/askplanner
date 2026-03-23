@@ -23,6 +23,7 @@ import (
 	"lab/askplanner/internal/clinic"
 	"lab/askplanner/internal/codex"
 	"lab/askplanner/internal/config"
+	"lab/askplanner/internal/selfcmd"
 	"lab/askplanner/internal/workspace"
 )
 
@@ -318,6 +319,14 @@ func prepareReply(ctx context.Context, apiClient *lark.Client, manager *attachme
 		if err != nil {
 			return nil, err
 		}
+		if selfcmd.IsWhoAmI(text) {
+			return &preparedReply{
+				directReply:     buildWhoAmIReply(userKey, conversationKey),
+				skipCodex:       true,
+				conversationKey: conversationKey,
+				userKey:         userKey,
+			}, nil
+		}
 		if wsCmd, matched, err := workspace.ParseCommand(text); matched {
 			if err != nil {
 				return nil, err
@@ -353,6 +362,10 @@ func prepareReply(ctx context.Context, apiClient *lark.Client, manager *attachme
 	default:
 		return nil, fmt.Errorf("unsupported message type: %s", extractMessageType(event))
 	}
+}
+
+func buildWhoAmIReply(userKey, conversationKey string) string {
+	return strings.TrimSpace(fmt.Sprintf("User Key: %s\nConversation Key: %s", strings.TrimSpace(userKey), strings.TrimSpace(conversationKey)))
 }
 
 func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, responder *codex.Responder, prefetcher *clinic.Prefetcher, prepared *preparedReply) (string, error) {
