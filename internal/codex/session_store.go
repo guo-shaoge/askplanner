@@ -24,6 +24,7 @@ type SessionRecord struct {
 	SessionID       string    `json:"session_id"`
 	PromptHash      string    `json:"prompt_hash"`
 	WorkDir         string    `json:"work_dir"`
+	EnvironmentHash string    `json:"environment_hash,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	LastActiveAt    time.Time `json:"last_active_at"`
 	TurnCount       int       `json:"turn_count"`

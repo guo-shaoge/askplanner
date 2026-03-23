@@ -23,6 +23,7 @@ import (
 	"lab/askplanner/internal/clinic"
 	"lab/askplanner/internal/codex"
 	"lab/askplanner/internal/config"
+	"lab/askplanner/internal/workspace"
 )
 
 const (
@@ -47,6 +48,7 @@ type preparedReply struct {
 	directReply     string
 	skipCodex       bool
 	attachmentCtx   codex.AttachmentContext
+	workspaceCmd    *workspace.Command
 	conversationKey string
 	userKey         string
 }
@@ -138,6 +140,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("build attachment manager: %v", err)
 	}
+	workspaceManager, err := workspace.NewManager(cfg)
+	if err != nil {
+		log.Fatalf("build workspace manager: %v", err)
+	}
+	workspaceManager.StartBackgroundJobs(context.Background())
 
 	apiClient := lark.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret, lark.WithLogLevel(larkcore.LogLevelInfo))
 
@@ -169,7 +176,7 @@ func main() {
 			}
 
 			return withTypingReaction(ctx, apiClient, messageID, func() error {
-				answer, err := handleEvent(ctx, apiClient, responder, prefetcher, attachmentManager, event)
+				answer, err := handleEvent(ctx, apiClient, responder, prefetcher, attachmentManager, workspaceManager, event)
 				if err != nil {
 					log.Printf("[larkbot] handle event error: %v (message_id=%s)", err, messageID)
 					answer = "Agent Error: " + err.Error()
@@ -197,13 +204,16 @@ func main() {
 	}
 }
 
-func handleEvent(ctx context.Context, apiClient *lark.Client, responder *codex.Responder, prefetcher *clinic.Prefetcher, manager *attachments.Manager, event *larkim.P2MessageReceiveV1) (string, error) {
+func handleEvent(ctx context.Context, apiClient *lark.Client, responder *codex.Responder, prefetcher *clinic.Prefetcher, manager *attachments.Manager, workspaceManager *workspace.Manager, event *larkim.P2MessageReceiveV1) (string, error) {
 	prepared, err := prepareReply(ctx, apiClient, manager, event)
 	if err != nil {
 		return "", err
 	}
 	if prepared.skipCodex {
 		return prepared.directReply, nil
+	}
+	if prepared.workspaceCmd != nil {
+		return runWorkspaceCommand(ctx, workspaceManager, responder, prefetcher, prepared)
 	}
 
 	question := strings.TrimSpace(prepared.question)
@@ -213,9 +223,13 @@ func handleEvent(ctx context.Context, apiClient *lark.Client, responder *codex.R
 	log.Printf("[larkbot] answering question: %q (message_id=%s, conversation=%s)",
 		question, extractMessageID(event), prepared.conversationKey)
 
-	enriched, err := prefetcher.Enrich(ctx, prepared.userKey, question, codex.RuntimeContext{
+	ws, err := workspaceManager.Ensure(ctx, prepared.userKey)
+	if err != nil {
+		return "", err
+	}
+	enriched, err := prefetcher.Enrich(ctx, prepared.userKey, question, workspace.BindRuntimeContext(codex.RuntimeContext{
 		Attachment: prepared.attachmentCtx,
-	})
+	}, ws))
 	if err != nil {
 		if msg := clinic.UserFacingMessage(err); msg != "" {
 			log.Printf("[larkbot] clinic prefetch user-visible error: %v (message_id=%s, conversation=%s)",
@@ -224,6 +238,7 @@ func handleEvent(ctx context.Context, apiClient *lark.Client, responder *codex.R
 		}
 		return "", err
 	}
+	enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
 	if strings.TrimSpace(enriched.IntroReply) != "" {
 		if strings.TrimSpace(prepared.prefix) != "" {
 			return prepared.prefix + "\n\n" + enriched.IntroReply, nil
@@ -281,6 +296,18 @@ func prepareReply(ctx context.Context, apiClient *lark.Client, manager *attachme
 		if err != nil {
 			return nil, err
 		}
+		if wsCmd, matched, err := workspace.ParseCommand(text); matched {
+			if err != nil {
+				return nil, err
+			}
+			return &preparedReply{
+				question:        strings.TrimSpace(wsCmd.Question),
+				attachmentCtx:   attachmentCtx,
+				workspaceCmd:    wsCmd,
+				conversationKey: conversationKey,
+				userKey:         userKey,
+			}, nil
+		}
 		return &preparedReply{
 			question:        text,
 			attachmentCtx:   attachmentCtx,
@@ -304,6 +331,51 @@ func prepareReply(ctx context.Context, apiClient *lark.Client, manager *attachme
 	default:
 		return nil, fmt.Errorf("unsupported message type: %s", extractMessageType(event))
 	}
+}
+
+func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, responder *codex.Responder, prefetcher *clinic.Prefetcher, prepared *preparedReply) (string, error) {
+	var (
+		ws  *workspace.Workspace
+		err error
+	)
+	switch prepared.workspaceCmd.Action {
+	case "status":
+		ws, err = manager.Status(ctx, prepared.userKey)
+	case "switch":
+		ws, err = manager.SwitchRepo(ctx, prepared.userKey, prepared.workspaceCmd.Repo, prepared.workspaceCmd.Ref)
+	case "sync":
+		ws, err = manager.Sync(ctx, prepared.userKey, prepared.workspaceCmd.Repo)
+	case "reset":
+		ws, err = manager.Reset(ctx, prepared.userKey, prepared.workspaceCmd.Repo)
+	default:
+		return "", fmt.Errorf("unsupported workspace command: %s", prepared.workspaceCmd.Action)
+	}
+	if err != nil {
+		return "", err
+	}
+	status := workspace.FormatStatus(ws)
+	if strings.TrimSpace(prepared.question) == "" {
+		return status, nil
+	}
+
+	enriched, err := prefetcher.Enrich(ctx, prepared.userKey, prepared.question, workspace.BindRuntimeContext(codex.RuntimeContext{
+		Attachment: prepared.attachmentCtx,
+	}, ws))
+	if err != nil {
+		if msg := clinic.UserFacingMessage(err); msg != "" {
+			return status + "\n\n" + msg, nil
+		}
+		return "", err
+	}
+	enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
+	if strings.TrimSpace(enriched.IntroReply) != "" {
+		return status + "\n\n" + enriched.IntroReply, nil
+	}
+	answer, err := responder.AnswerWithContext(ctx, prepared.conversationKey, prepared.question, enriched.RuntimeContext)
+	if err != nil {
+		return "", err
+	}
+	return status + "\n\n" + answer, nil
 }
 
 func shouldHandleEvent(event *larkim.P2MessageReceiveV1, bot botIdentity) (bool, string) {

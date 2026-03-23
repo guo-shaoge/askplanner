@@ -17,14 +17,24 @@ type Config struct {
 	PromptFile string // absolute path, default: "<ProjectRoot>/prompt"
 
 	// Codex CLI
-	CodexBin             string
-	CodexModel           string
-	CodexReasoningEffort string
-	CodexSandbox         string
-	CodexSessionStore    string // absolute path
-	CodexMaxTurns        int
-	CodexSessionTTLHours int
-	CodexTimeoutSec      int
+	CodexBin                          string
+	CodexModel                        string
+	CodexReasoningEffort              string
+	CodexSandbox                      string
+	CodexSessionStore                 string // absolute path
+	CodexMaxTurns                     int
+	CodexSessionTTLHours              int
+	CodexTimeoutSec                   int
+	WorkspaceRoot                     string
+	WorkspaceIdleTTLHours             int
+	WorkspaceGCIntervalMin            int
+	AgentRulesSyncIntervalMin         int
+	WorkspaceRepoTidbURL              string
+	WorkspaceRepoTidbDefaultRef       string
+	WorkspaceRepoAgentRulesURL        string
+	WorkspaceRepoAgentRulesDefaultRef string
+	WorkspaceRepoTidbDocsURL          string
+	WorkspaceRepoTidbDocsDefaultRef   string
 
 	// Clinic
 	ClinicEnableAutoSlowQuery bool
@@ -51,29 +61,43 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("detect project root: %w", err)
 	}
 
+	workspaceRoot := resolvePath(projectRoot, envOrDefault("WORKSPACE_ROOT", ".askplanner/workspaces"))
+	clinicStoreDir := envOrDefault("CLINIC_STORE_DIR", filepath.Join(workspaceRoot, "clinic"))
+	feishuFileDir := envOrDefault("FEISHU_FILE_DIR", filepath.Join(workspaceRoot, "uploads"))
+
 	return &Config{
-		ProjectRoot:               projectRoot,
-		PromptFile:                resolvePath(projectRoot, envOrDefault("PROMPT_FILE", "prompt")),
-		CodexBin:                  envOrDefault("CODEX_BIN", "codex"),
-		CodexModel:                envOrDefault("CODEX_MODEL", "gpt-5.3-codex"),
-		CodexReasoningEffort:      envOrDefault("CODEX_REASONING_EFFORT", "medium"),
-		CodexSandbox:              envOrDefault("CODEX_SANDBOX", "read-only"),
-		CodexSessionStore:         resolvePath(projectRoot, envOrDefault("CODEX_SESSION_STORE", ".askplanner/sessions.json")),
-		CodexMaxTurns:             envAsInt("CODEX_MAX_TURNS", 30),
-		CodexSessionTTLHours:      envAsInt("CODEX_SESSION_TTL_HOURS", 24),
-		CodexTimeoutSec:           envAsInt("CODEX_TIMEOUT_SEC", 120),
-		ClinicEnableAutoSlowQuery: envAsBool("CLINIC_ENABLE_AUTO_SLOWQUERY", false),
-		ClinicAPIKey:              strings.TrimSpace(os.Getenv("CLINIC_API_KEY")),
-		ClinicHTTPTimeoutSec:      envAsInt("CLINIC_HTTP_TIMEOUT_SEC", 15),
-		ClinicStoreDir:            resolvePath(projectRoot, envOrDefault("CLINIC_STORE_DIR", ".askplanner/clinic-slowqueries")),
-		ClinicStoreMaxItems:       envAsInt("CLINIC_STORE_MAX_ITEMS", 50),
-		LogFile:                   resolvePath(projectRoot, envOrDefault("LOG_FILE", ".askplanner/askplanner.log")),
-		FeishuAppID:               os.Getenv("FEISHU_APP_ID"),
-		FeishuAppSecret:           os.Getenv("FEISHU_APP_SECRET"),
-		FeishuBotName:             strings.ToLower(strings.TrimSpace(envOrDefault("FEISHU_BOT_NAME", "askplanner"))),
-		FeishuDedupTimeoutInMin:   envAsInt("FEISHU_DEDUP_MESSAGE_TIMEOUT_IN_MIN", 3600),
-		FeishuFileDir:             resolvePath(projectRoot, envOrDefault("FEISHU_FILE_DIR", ".askplanner/lark-files")),
-		FeishuUserFileMaxItems:    envAsInt("FEISHU_USER_FILE_MAX_ITEMS", 100),
+		ProjectRoot:                       projectRoot,
+		PromptFile:                        resolvePath(projectRoot, envOrDefault("PROMPT_FILE", "prompt")),
+		CodexBin:                          envOrDefault("CODEX_BIN", "codex"),
+		CodexModel:                        envOrDefault("CODEX_MODEL", "gpt-5.3-codex"),
+		CodexReasoningEffort:              envOrDefault("CODEX_REASONING_EFFORT", "medium"),
+		CodexSandbox:                      envOrDefault("CODEX_SANDBOX", "read-only"),
+		CodexSessionStore:                 resolvePath(projectRoot, envOrDefault("CODEX_SESSION_STORE", ".askplanner/sessions.json")),
+		CodexMaxTurns:                     envAsInt("CODEX_MAX_TURNS", 30),
+		CodexSessionTTLHours:              envAsInt("CODEX_SESSION_TTL_HOURS", 24),
+		CodexTimeoutSec:                   envAsInt("CODEX_TIMEOUT_SEC", 120),
+		WorkspaceRoot:                     workspaceRoot,
+		WorkspaceIdleTTLHours:             envAsInt("WORKSPACE_IDLE_TTL_HOURS", 72),
+		WorkspaceGCIntervalMin:            envAsInt("WORKSPACE_GC_INTERVAL_MIN", 15),
+		AgentRulesSyncIntervalMin:         envAsInt("AGENT_RULES_SYNC_INTERVAL_MIN", 10),
+		WorkspaceRepoTidbURL:              envOrDefault("WORKSPACE_REPO_TIDB_URL", "https://gh-proxy.org/https://github.com/pingcap/tidb.git"),
+		WorkspaceRepoTidbDefaultRef:       envOrDefault("WORKSPACE_REPO_TIDB_DEFAULT_REF", "master"),
+		WorkspaceRepoAgentRulesURL:        envOrDefault("WORKSPACE_REPO_AGENT_RULES_URL", "https://gh-proxy.org/https://github.com/pingcap/agent-rules.git"),
+		WorkspaceRepoAgentRulesDefaultRef: envOrDefault("WORKSPACE_REPO_AGENT_RULES_DEFAULT_REF", "main"),
+		WorkspaceRepoTidbDocsURL:          envOrDefault("WORKSPACE_REPO_TIDB_DOCS_URL", "https://github.com/pingcap/docs.git"),
+		WorkspaceRepoTidbDocsDefaultRef:   envOrDefault("WORKSPACE_REPO_TIDB_DOCS_DEFAULT_REF", "master"),
+		ClinicEnableAutoSlowQuery:         envAsBool("CLINIC_ENABLE_AUTO_SLOWQUERY", false),
+		ClinicAPIKey:                      strings.TrimSpace(os.Getenv("CLINIC_API_KEY")),
+		ClinicHTTPTimeoutSec:              envAsInt("CLINIC_HTTP_TIMEOUT_SEC", 15),
+		ClinicStoreDir:                    resolvePath(projectRoot, clinicStoreDir),
+		ClinicStoreMaxItems:               envAsInt("CLINIC_STORE_MAX_ITEMS", 50),
+		LogFile:                           resolvePath(projectRoot, envOrDefault("LOG_FILE", ".askplanner/askplanner.log")),
+		FeishuAppID:                       os.Getenv("FEISHU_APP_ID"),
+		FeishuAppSecret:                   os.Getenv("FEISHU_APP_SECRET"),
+		FeishuBotName:                     strings.ToLower(strings.TrimSpace(envOrDefault("FEISHU_BOT_NAME", "askplanner"))),
+		FeishuDedupTimeoutInMin:           envAsInt("FEISHU_DEDUP_MESSAGE_TIMEOUT_IN_MIN", 3600),
+		FeishuFileDir:                     resolvePath(projectRoot, feishuFileDir),
+		FeishuUserFileMaxItems:            envAsInt("FEISHU_USER_FILE_MAX_ITEMS", 100),
 	}, nil
 }
 

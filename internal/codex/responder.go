@@ -11,13 +11,14 @@ import (
 )
 
 type Responder struct {
-	runner     *Runner
-	store      *FileSessionStore
-	prompt     string
-	promptHash string
-	maxTurns   int
-	sessionTTL time.Duration
-	timeout    time.Duration
+	runner         *Runner
+	store          *FileSessionStore
+	prompt         string
+	promptHash     string
+	defaultWorkDir string
+	maxTurns       int
+	sessionTTL     time.Duration
+	timeout        time.Duration
 }
 
 func NewResponder(cfg *config.Config) (*Responder, error) {
@@ -36,15 +37,15 @@ func NewResponder(cfg *config.Config) (*Responder, error) {
 			Bin:             cfg.CodexBin,
 			Model:           cfg.CodexModel,
 			ReasoningEffort: cfg.CodexReasoningEffort,
-			WorkDir:         cfg.ProjectRoot,
 			Sandbox:         cfg.CodexSandbox,
 		},
-		store:      store,
-		prompt:     prompt,
-		promptHash: PromptHash(prompt),
-		maxTurns:   cfg.CodexMaxTurns,
-		sessionTTL: time.Duration(cfg.CodexSessionTTLHours) * time.Hour,
-		timeout:    time.Duration(cfg.CodexTimeoutSec) * time.Second,
+		store:          store,
+		prompt:         prompt,
+		promptHash:     PromptHash(prompt),
+		defaultWorkDir: cfg.ProjectRoot,
+		maxTurns:       cfg.CodexMaxTurns,
+		sessionTTL:     time.Duration(cfg.CodexSessionTTLHours) * time.Hour,
+		timeout:        time.Duration(cfg.CodexTimeoutSec) * time.Second,
 	}, nil
 }
 
@@ -61,9 +62,11 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 
 	now := time.Now().UTC()
 	record, ok := r.store.Get(conversationKey)
+	workDir := r.workDirForRuntime(runtime)
+	envHash := r.environmentHashForRuntime(runtime, workDir)
 
-	if ok && r.canResume(record, now) {
-		result, err := r.runner.RunResume(ctx, record.SessionID, BuildResumePrompt(question, runtime))
+	if ok && r.canResume(record, now, workDir, envHash) {
+		result, err := r.runner.RunResume(ctx, workDir, record.SessionID, BuildResumePrompt(question, runtime))
 		if err == nil {
 			record.LastActiveAt = now
 			record.TurnCount++
@@ -82,7 +85,7 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 	}
 
 	initialPrompt := BuildInitialPrompt(r.prompt, summarizeTurns(record.Turns), question, runtime)
-	result, err := r.runner.RunNew(ctx, initialPrompt)
+	result, err := r.runner.RunNew(ctx, workDir, initialPrompt)
 	if err != nil {
 		return "", err
 	}
@@ -94,7 +97,8 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 		ConversationKey: conversationKey,
 		SessionID:       result.SessionID,
 		PromptHash:      r.promptHash,
-		WorkDir:         r.runner.WorkDir,
+		WorkDir:         workDir,
+		EnvironmentHash: envHash,
 		CreatedAt:       now,
 		LastActiveAt:    now,
 		TurnCount:       1,
@@ -114,14 +118,17 @@ func (r *Responder) Reset(conversationKey string) error {
 	return r.store.Delete(conversationKey)
 }
 
-func (r *Responder) canResume(record SessionRecord, now time.Time) bool {
+func (r *Responder) canResume(record SessionRecord, now time.Time, workDir, envHash string) bool {
 	if strings.TrimSpace(record.SessionID) == "" {
 		return false
 	}
 	if record.PromptHash != r.promptHash {
 		return false
 	}
-	if record.WorkDir != r.runner.WorkDir {
+	if record.WorkDir != workDir {
+		return false
+	}
+	if strings.TrimSpace(record.EnvironmentHash) != strings.TrimSpace(envHash) {
 		return false
 	}
 	if r.maxTurns > 0 && record.TurnCount >= r.maxTurns {
@@ -131,6 +138,20 @@ func (r *Responder) canResume(record SessionRecord, now time.Time) bool {
 		return false
 	}
 	return true
+}
+
+func (r *Responder) workDirForRuntime(runtime RuntimeContext) string {
+	if runtime.Workspace != nil && strings.TrimSpace(runtime.Workspace.RootDir) != "" {
+		return strings.TrimSpace(runtime.Workspace.RootDir)
+	}
+	return r.defaultWorkDir
+}
+
+func (r *Responder) environmentHashForRuntime(runtime RuntimeContext, workDir string) string {
+	if runtime.Workspace != nil && strings.TrimSpace(runtime.Workspace.EnvironmentHash) != "" {
+		return strings.TrimSpace(runtime.Workspace.EnvironmentHash)
+	}
+	return PromptHash(workDir)
 }
 
 func summarizeTurns(turns []Turn) string {

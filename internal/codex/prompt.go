@@ -45,6 +45,7 @@ func BuildInitialPrompt(normalizedPrompt, summary, question string, runtime Runt
 	sb.WriteString("\n\n## Runtime Context\n")
 	sb.WriteString("- You are serving a TiDB query tuning chat relay backed by Codex CLI.\n")
 	sb.WriteString("- Answer the user's latest message directly.\n")
+	writeWorkspaceContext(&sb, runtime.Workspace)
 	writeAttachmentContext(&sb, runtime.Attachment)
 	writeClinicLibraryContext(&sb, runtime.ClinicLibrary)
 	writeClinicContext(&sb, runtime.Clinic)
@@ -62,6 +63,7 @@ func BuildInitialPrompt(normalizedPrompt, summary, question string, runtime Runt
 func BuildResumePrompt(question string, runtime RuntimeContext) string {
 	var sb strings.Builder
 	sb.WriteString("Continue the existing TiDB query tuning conversation.\n")
+	writeWorkspaceContext(&sb, runtime.Workspace)
 	writeAttachmentContext(&sb, runtime.Attachment)
 	writeClinicLibraryContext(&sb, runtime.ClinicLibrary)
 	writeClinicContext(&sb, runtime.Clinic)
@@ -69,6 +71,47 @@ func BuildResumePrompt(question string, runtime RuntimeContext) string {
 	sb.WriteString(strings.TrimSpace(question))
 	sb.WriteByte('\n')
 	return sb.String()
+}
+
+func writeWorkspaceContext(sb *strings.Builder, workspace *WorkspaceContext) {
+	if workspace == nil || strings.TrimSpace(workspace.RootDir) == "" {
+		return
+	}
+
+	sb.WriteString("- The current user workspace root is stored under: ")
+	sb.WriteString(strings.TrimSpace(workspace.RootDir))
+	sb.WriteString("\n")
+	if v := strings.TrimSpace(workspace.UserFilesDir); v != "" {
+		sb.WriteString("- User-uploaded files are mounted in this workspace at: ")
+		sb.WriteString(v)
+		sb.WriteString("\n")
+	}
+	if v := strings.TrimSpace(workspace.ClinicFilesDir); v != "" {
+		sb.WriteString("- Saved Clinic artifacts are mounted in this workspace at: ")
+		sb.WriteString(v)
+		sb.WriteString("\n")
+	}
+	if len(workspace.Repos) == 0 {
+		sb.WriteString("- Managed workspace repos: none.\n")
+		return
+	}
+	sb.WriteString("- Managed workspace repos:\n")
+	for _, repo := range workspace.Repos {
+		sb.WriteString("  - ")
+		sb.WriteString(strings.TrimSpace(repo.RelativePath))
+		if v := strings.TrimSpace(repo.RequestedRef); v != "" {
+			sb.WriteString(" requested_ref=")
+			sb.WriteString(v)
+		}
+		if v := strings.TrimSpace(repo.ResolvedSHA); v != "" {
+			sb.WriteString(" resolved_sha=")
+			sb.WriteString(v)
+		}
+		if repo.TrackingLatest {
+			sb.WriteString(" tracking=latest")
+		}
+		sb.WriteByte('\n')
+	}
 }
 
 func writeAttachmentContext(sb *strings.Builder, attachment AttachmentContext) {
