@@ -2,6 +2,7 @@ package clinic
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +48,30 @@ func TestPrefetcherReturnsUserErrorWhenAPIKeyMissing(t *testing.T) {
 	}
 	if got := UserFacingMessage(err); got == "" {
 		t.Fatalf("expected user-facing error, got %v", err)
+	}
+}
+
+func TestClassifyClinicFetchErrorRateLimit(t *testing.T) {
+	err := classifyClinicFetchError(errors.New("Clinic API returned status 429: too many requests"))
+	if got := UserFacingMessage(err); !strings.Contains(got, "rate-limiting") {
+		t.Fatalf("user-facing message = %q", got)
+	}
+}
+
+func TestBuildIntroReplyUnsavedDoesNotClaimSaved(t *testing.T) {
+	reply := buildIntroReply(codex.RuntimeContext{
+		Clinic: &codex.ClinicContext{
+			ClusterID: "123",
+			Summary: codex.ClinicSummary{
+				TotalQueries: 1,
+			},
+		},
+	}, false)
+	if !strings.Contains(reply, "couldn't save it locally") {
+		t.Fatalf("unexpected intro reply: %q", reply)
+	}
+	if strings.Contains(reply, "Saved Entry:") {
+		t.Fatalf("unsaved intro should not claim a saved entry: %q", reply)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"time"
@@ -15,35 +16,39 @@ import (
 	"lab/askplanner/internal/codex"
 	"lab/askplanner/internal/config"
 	"lab/askplanner/internal/selfcmd"
+	"lab/askplanner/internal/usererr"
 	"lab/askplanner/internal/workspace"
 )
 
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		fatalStartup("load config", err, "Check PROJECT_ROOT and PROMPT_FILE, or start askplanner from the repository root.")
 	}
 
 	logFile, err := config.SetupLogging(cfg.LogFile)
 	if err != nil {
-		log.Fatalf("setup logging: %v", err)
+		fatalStartup("setup logging", err, "Check LOG_FILE and make sure the target directory is writable.")
 	}
 	defer logFile.Close()
+	if _, err := exec.LookPath(cfg.CodexBin); err != nil {
+		fatalStartup("locate Codex CLI", err, fmt.Sprintf("Install Codex CLI or point CODEX_BIN to a valid executable. Current value: %s", cfg.CodexBin))
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
 	responder, err := codex.NewResponder(cfg)
 	if err != nil {
-		log.Fatalf("build codex responder: %v", err)
+		fatalStartup("build codex responder", err, "Check PROMPT_FILE and CODEX_SESSION_STORE. The prompt must exist, and the session-store directory must be writable.")
 	}
 	prefetcher, err := clinic.NewPrefetcher(cfg)
 	if err != nil {
-		log.Fatalf("build clinic prefetcher: %v", err)
+		fatalStartup("build clinic prefetcher", err, "If Clinic auto-analysis is enabled, make sure CLINIC_STORE_DIR is writable.")
 	}
 	workspaceManager, err := workspace.NewManager(cfg)
 	if err != nil {
-		log.Fatalf("build workspace manager: %v", err)
+		fatalStartup("build workspace manager", err, "Check workspace-related storage paths and make sure they are writable.")
 	}
 
 	fmt.Printf("askplanner v2 (backend: codex-cli, model: %s)\n", cfg.CodexModel)
@@ -72,7 +77,7 @@ func main() {
 		}
 		if question == "reset" {
 			if err := responder.Reset(conversationKey); err != nil {
-				fmt.Printf("Error: %v\n\n", err)
+				fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't reset the current session. Please retry."))
 			} else {
 				fmt.Println("Session reset.")
 				fmt.Println()
@@ -87,12 +92,12 @@ func main() {
 		if cmd, matched, err := admin.ParseCommand(question); matched {
 			fmt.Println()
 			if err != nil {
-				fmt.Printf("Error: %v\n\n", err)
+				fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
 			}
 			answer, err := runAdminCommand(ctx, workspaceManager, responder, cmd)
 			if err != nil {
-				fmt.Printf("Error: %v\n\n", err)
+				fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
 			}
 			fmt.Println(answer)
@@ -102,12 +107,12 @@ func main() {
 		if cmd, matched, err := workspace.ParseCommand(question); matched {
 			fmt.Println()
 			if err != nil {
-				fmt.Printf("Error: %v\n\n", err)
+				fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
 			}
 			answer, err := runWorkspaceCommand(ctx, workspaceManager, responder, prefetcher, conversationKey, clinicUserKey, cmd)
 			if err != nil {
-				fmt.Printf("Error: %v\n\n", err)
+				fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
 			}
 			fmt.Println(answer)
@@ -119,7 +124,7 @@ func main() {
 		start := time.Now()
 		ws, err := workspaceManager.Ensure(ctx, clinicUserKey)
 		if err != nil {
-			fmt.Printf("Error: %v\n\n", err)
+			fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 			continue
 		}
 		enriched, err := prefetcher.Enrich(ctx, clinicUserKey, question, workspace.BindRuntimeContext(codex.RuntimeContext{}, ws))
@@ -129,20 +134,23 @@ func main() {
 				fmt.Printf("%s\n\n", msg)
 				continue
 			}
-			fmt.Printf("Error: %v\n\n", err)
+			fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 			continue
 		}
 		enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
 		if strings.TrimSpace(enriched.IntroReply) != "" {
-			fmt.Println(enriched.IntroReply)
+			fmt.Println(joinReplySections(enriched.IntroReply, formatWarning(enriched.Warning)))
 			fmt.Println()
 			continue
 		}
 
 		answer, err := responder.AnswerWithContext(ctx, conversationKey, question, enriched.RuntimeContext)
 		if err != nil {
-			fmt.Printf("Error: %v\n\n", err)
+			fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 			continue
+		}
+		if strings.TrimSpace(enriched.Warning) != "" {
+			answer = joinReplySections(formatWarning(enriched.Warning), answer)
 		}
 		log.Printf("[askplanner] request done conversation=%s elapsed=%s", conversationKey, time.Since(start))
 
@@ -181,20 +189,23 @@ func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, respon
 	enriched, err := prefetcher.Enrich(ctx, userKey, cmd.Question, workspace.BindRuntimeContext(codex.RuntimeContext{}, ws))
 	if err != nil {
 		if msg := clinic.UserFacingMessage(err); msg != "" {
-			return status + "\n\n" + msg, nil
+			return joinReplySections(status, msg), nil
 		}
 		return "", err
 	}
 	enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
 	if strings.TrimSpace(enriched.IntroReply) != "" {
-		return status + "\n\n" + enriched.IntroReply, nil
+		return joinReplySections(status, enriched.IntroReply, formatWarning(enriched.Warning)), nil
 	}
 	answer, err := responder.AnswerWithContext(ctx, conversationKey, cmd.Question, enriched.RuntimeContext)
 	if err != nil {
 		return "", err
 	}
+	if strings.TrimSpace(enriched.Warning) != "" {
+		answer = joinReplySections(formatWarning(enriched.Warning), answer)
+	}
 	log.Printf("[askplanner] workspace command answered conversation=%s action=%s elapsed=%s", conversationKey, cmd.Action, time.Since(start))
-	return status + "\n\n" + answer, nil
+	return joinReplySections(status, answer), nil
 }
 
 func runAdminCommand(ctx context.Context, workspaceManager *workspace.Manager, responder *codex.Responder, cmd *admin.Command) (string, error) {
@@ -215,4 +226,46 @@ func runAdminCommand(ctx context.Context, workspaceManager *workspace.Manager, r
 	default:
 		return "", fmt.Errorf("unsupported admin command: %s", cmd.Action)
 	}
+}
+
+func joinReplySections(parts ...string) string {
+	trimmed := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		trimmed = append(trimmed, part)
+	}
+	return strings.Join(trimmed, "\n\n")
+}
+
+func formatWarning(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return ""
+	}
+	return "Warning: " + message
+}
+
+func fatalStartup(component string, err error, hints ...string) {
+	var sb strings.Builder
+	sb.WriteString("startup error: ")
+	sb.WriteString(component)
+	if err != nil {
+		sb.WriteString(": ")
+		sb.WriteString(err.Error())
+	}
+	for _, hint := range hints {
+		hint = strings.TrimSpace(hint)
+		if hint == "" {
+			continue
+		}
+		sb.WriteString("\n- ")
+		sb.WriteString(hint)
+	}
+	message := sb.String()
+	fmt.Fprintln(os.Stderr, message)
+	log.Printf("%s", strings.ReplaceAll(message, "\n", " | "))
+	os.Exit(1)
 }

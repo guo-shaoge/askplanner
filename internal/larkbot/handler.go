@@ -65,7 +65,7 @@ func handlePreparedReply(ctx context.Context, responder responderClient, prefetc
 		return "", err
 	}
 	if strings.TrimSpace(prepared.prefix) != "" {
-		return prepared.prefix + "\n\n" + answer, nil
+		return joinReplySections(prepared.prefix, answer), nil
 	}
 	return answer, nil
 }
@@ -106,7 +106,7 @@ func runWorkspaceCommand(ctx context.Context, manager workspaceService, responde
 	}
 	log.Printf("[larkbot] workspace command answered conversation=%s action=%s elapsed=%s",
 		prepared.conversationKey, prepared.workspaceCmd.Action, time.Since(start))
-	return status + "\n\n" + answer, nil
+	return joinReplySections(status, answer), nil
 }
 
 // answerPreparedQuestion owns the "question -> enrich runtime -> short-circuit
@@ -133,7 +133,14 @@ func answerPreparedQuestion(ctx context.Context, responder responderClient, pref
 
 	enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
 	if strings.TrimSpace(enriched.IntroReply) != "" {
-		return enriched.IntroReply, nil
+		return joinReplySections(enriched.IntroReply, formatWarning(enriched.Warning)), nil
 	}
-	return responder.AnswerWithContext(ctx, prepared.conversationKey, question, enriched.RuntimeContext)
+	answer, err := responder.AnswerWithContext(ctx, prepared.conversationKey, question, enriched.RuntimeContext)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(enriched.Warning) != "" {
+		answer = joinReplySections(formatWarning(enriched.Warning), answer)
+	}
+	return answer, nil
 }

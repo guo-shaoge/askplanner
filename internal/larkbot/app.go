@@ -17,6 +17,7 @@ import (
 	"lab/askplanner/internal/clinic"
 	"lab/askplanner/internal/codex"
 	"lab/askplanner/internal/config"
+	"lab/askplanner/internal/usererr"
 	"lab/askplanner/internal/workspace"
 )
 
@@ -140,7 +141,7 @@ func (a *App) newEventHandler() *dispatcher.EventDispatcher {
 				answer, err := a.answerEvent(ctx, event)
 				if err != nil {
 					log.Printf("[larkbot] handle event error: %v (message_id=%s)", err, messageID)
-					answer = "Agent Error: " + err.Error()
+					answer = usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs.")
 				}
 
 				reply, err := buildReplyBody(answer)

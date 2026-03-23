@@ -14,10 +14,7 @@ import (
 // buildReplyBody always renders a post+markdown payload so the bot can send
 // code fences, links, and richer formatting without switching message types.
 func buildReplyBody(text string) (replyBody, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		text = " "
-	}
+	text = normalizeReplyText(text)
 
 	payload := postMessageContent{
 		ZhCN: postLocale{
@@ -34,9 +31,34 @@ func buildReplyBody(text string) (replyBody, error) {
 		return replyBody{}, err
 	}
 	return replyBody{
-		msgType: "post",
-		content: string(b),
+		msgType:      "post",
+		content:      string(b),
+		fallbackText: text,
 	}, nil
+}
+
+func buildTextReplyBody(text string) (replyBody, error) {
+	text = normalizeReplyText(text)
+	payload := map[string]string{
+		"text": text,
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return replyBody{}, err
+	}
+	return replyBody{
+		msgType:      "text",
+		content:      string(b),
+		fallbackText: text,
+	}, nil
+}
+
+func normalizeReplyText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return " "
+	}
+	return text
 }
 
 // withTypingReaction best-effort wraps slow replies with a temporary Typing
@@ -73,10 +95,10 @@ func addTypingReaction(ctx context.Context, apiClient *lark.Client, messageID st
 				Build()).
 			Build())
 	if err != nil {
-		return "", fmt.Errorf("call create reaction API: %w", err)
+		return "", classifyFeishuOperationError(err, "I couldn't add the typing reaction in Feishu. Continuing without it.")
 	}
 	if !resp.Success() {
-		return "", fmt.Errorf("create reaction API error: code=%d, msg=%s", resp.Code, resp.Msg)
+		return "", classifyFeishuResponseError(feishuOpAddReaction, "I couldn't add the typing reaction in Feishu. Continuing without it.", resp.Code, resp.Msg)
 	}
 
 	reactionID := ""
@@ -98,10 +120,10 @@ func deleteMessageReaction(ctx context.Context, apiClient *lark.Client, messageI
 			ReactionId(reactionID).
 			Build())
 	if err != nil {
-		return fmt.Errorf("call delete reaction API: %w", err)
+		return classifyFeishuOperationError(err, "I couldn't remove the typing reaction in Feishu.")
 	}
 	if !resp.Success() {
-		return fmt.Errorf("delete reaction API error: code=%d, msg=%s", resp.Code, resp.Msg)
+		return classifyFeishuResponseError(feishuOpDeleteReaction, "I couldn't remove the typing reaction in Feishu.", resp.Code, resp.Msg)
 	}
 
 	log.Printf("[larkbot] typing reaction deleted (message_id=%s, reaction_id=%s)", messageID, reactionID)
@@ -109,6 +131,25 @@ func deleteMessageReaction(ctx context.Context, apiClient *lark.Client, messageI
 }
 
 func replyMessage(ctx context.Context, apiClient *lark.Client, messageID string, body replyBody) error {
+	if err := replyMessageOnce(ctx, apiClient, messageID, body, "reply-"+messageID+"-"+body.msgType); err != nil {
+		if body.msgType == "post" && strings.TrimSpace(body.fallbackText) != "" && shouldFallbackToTextReply(err) {
+			log.Printf("[larkbot] rich post reply failed, falling back to text: %v (message_id=%s)", err, messageID)
+			fallback, buildErr := buildTextReplyBody(body.fallbackText)
+			if buildErr != nil {
+				return fmt.Errorf("build text fallback reply: %w", buildErr)
+			}
+			if fallbackErr := replyMessageOnce(ctx, apiClient, messageID, fallback, "reply-"+messageID+"-text"); fallbackErr == nil {
+				return nil
+			} else {
+				return fmt.Errorf("reply fallback after rich post failure: %w", fallbackErr)
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func replyMessageOnce(ctx context.Context, apiClient *lark.Client, messageID string, body replyBody, uuid string) error {
 	log.Printf("[larkbot] replying to message_id=%s", messageID)
 	resp, err := apiClient.Im.V1.Message.Reply(ctx,
 		larkim.NewReplyMessageReqBuilder().
@@ -116,15 +157,23 @@ func replyMessage(ctx context.Context, apiClient *lark.Client, messageID string,
 			Body(larkim.NewReplyMessageReqBodyBuilder().
 				MsgType(body.msgType).
 				Content(body.content).
-				Uuid("reply-"+messageID).
+				Uuid(uuid).
 				Build()).
 			Build())
 	if err != nil {
-		return fmt.Errorf("call reply API: %w", err)
+		return classifyFeishuOperationError(err, "I couldn't send the reply to Feishu.")
 	}
 	if !resp.Success() {
-		return fmt.Errorf("reply API error: code=%d, msg=%s", resp.Code, resp.Msg)
+		return classifyFeishuResponseError(feishuOpReplyMessage, "I couldn't send the reply to Feishu.", resp.Code, resp.Msg)
 	}
 	log.Printf("[larkbot] reply sent (message_id=%s)", messageID)
 	return nil
+}
+
+func shouldFallbackToTextReply(err error) bool {
+	lower := strings.ToLower(err.Error())
+	if containsAny(lower, "rate limit", "too many requests", "429", "forbidden", "unauthorized", "permission", "network", "dial tcp", "timeout", "timed out") {
+		return false
+	}
+	return containsAny(lower, "msg_type", "message type", "invalid param", "invalid parameter", "invalid content", "content invalid", "unsupported", "not support", "format", "rich reply format", "reply content")
 }
