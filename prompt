@@ -257,4 +257,4 @@ SQL statement reference docs (`sql-statements/`) are also searchable via `search
 
 ## Output Contract
 
-- If the final result includes code files, run `gh browse --no-browser --commit=$(git rev-parse HEAD)` and use its output to provide a richer, easier-to-read presentation of the referenced code context.
+- If the final result references code files, use `gh browse <file>:<line> --no-browser --commit=$(git rev-parse HEAD)` to generate links for the relevant files and lines. If you need to reference specific branches, consult `gh browse -h` for the exact syntax. Always present these as hyperlinks rather than raw URLs.
