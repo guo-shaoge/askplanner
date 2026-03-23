@@ -95,10 +95,10 @@ func addTypingReaction(ctx context.Context, apiClient *lark.Client, messageID st
 				Build()).
 			Build())
 	if err != nil {
-		return "", classifyFeishuOperationError(err, "I couldn't add the typing reaction in Feishu. Continuing without it.")
+		return "", classifyFeishuOperationError(err, "Agent couldn't add the typing reaction in Feishu. Continuing without it.")
 	}
 	if !resp.Success() {
-		return "", classifyFeishuResponseError(feishuOpAddReaction, "I couldn't add the typing reaction in Feishu. Continuing without it.", resp.Code, resp.Msg)
+		return "", classifyFeishuResponseError(feishuOpAddReaction, "Agent couldn't add the typing reaction in Feishu. Continuing without it.", resp.Code, resp.Msg)
 	}
 
 	reactionID := ""
@@ -120,10 +120,10 @@ func deleteMessageReaction(ctx context.Context, apiClient *lark.Client, messageI
 			ReactionId(reactionID).
 			Build())
 	if err != nil {
-		return classifyFeishuOperationError(err, "I couldn't remove the typing reaction in Feishu.")
+		return classifyFeishuOperationError(err, "Agent couldn't remove the typing reaction in Feishu.")
 	}
 	if !resp.Success() {
-		return classifyFeishuResponseError(feishuOpDeleteReaction, "I couldn't remove the typing reaction in Feishu.", resp.Code, resp.Msg)
+		return classifyFeishuResponseError(feishuOpDeleteReaction, "Agent couldn't remove the typing reaction in Feishu.", resp.Code, resp.Msg)
 	}
 
 	log.Printf("[larkbot] typing reaction deleted (message_id=%s, reaction_id=%s)", messageID, reactionID)
@@ -161,10 +161,10 @@ func replyMessageOnce(ctx context.Context, apiClient *lark.Client, messageID str
 				Build()).
 			Build())
 	if err != nil {
-		return classifyFeishuOperationError(err, "I couldn't send the reply to Feishu.")
+		return classifyFeishuOperationError(err, "Agent couldn't send the reply to Feishu.")
 	}
 	if !resp.Success() {
-		return classifyFeishuResponseError(feishuOpReplyMessage, "I couldn't send the reply to Feishu.", resp.Code, resp.Msg)
+		return classifyFeishuResponseError(feishuOpReplyMessage, "Agent couldn't send the reply to Feishu.", resp.Code, resp.Msg)
 	}
 	log.Printf("[larkbot] reply sent (message_id=%s)", messageID)
 	return nil

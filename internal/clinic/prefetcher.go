@@ -105,7 +105,7 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 	previousURL := ""
 	runtime, loadErr := p.attachLatestStored(userKey, runtime)
 	if loadErr != nil {
-		return EnrichResult{RuntimeContext: runtime}, usererr.WrapLocalStorage("I couldn't load the saved Clinic snapshots from local storage. Please retry.", loadErr)
+		return EnrichResult{RuntimeContext: runtime}, usererr.WrapLocalStorage("Agent couldn't load the saved Clinic snapshots from local storage. Please retry.", loadErr)
 	}
 	if runtime.Clinic != nil {
 		previousURL = strings.TrimSpace(runtime.Clinic.SourceURL)
@@ -114,7 +114,7 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 	spec, matched, err := ParseSlowQueryLink(question)
 	if err != nil {
 		log.Printf("[clinic] parse failed for potential slow query link: %v", err)
-		return EnrichResult{RuntimeContext: runtime}, usererr.Wrap(usererr.KindInvalidInput, "I detected a Clinic slow query link but could not parse its cluster ID and time range. Please send the full share link from Clinic Slow Query.", err)
+		return EnrichResult{RuntimeContext: runtime}, usererr.Wrap(usererr.KindInvalidInput, "Agent detected a Clinic slow query link but could not parse its cluster ID and time range. Please send the full share link from Clinic Slow Query.", err)
 	}
 	if !matched {
 		return EnrichResult{RuntimeContext: runtime}, nil
@@ -153,7 +153,7 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 		}
 		result := EnrichResult{
 			RuntimeContext: runtime,
-			Warning:        buildClinicPersistenceWarning("Clinic data was fetched, but I couldn't save this snapshot locally. Follow-up turns may not be able to reuse it.", storeErr),
+			Warning:        buildClinicPersistenceWarning("Clinic data was fetched, but Agent couldn't save this snapshot locally. Follow-up turns may not be able to reuse it.", storeErr),
 		}
 		if shouldReturnIntroReply(question, previousURL, spec) {
 			result.IntroReply = buildIntroReply(runtime, false)
@@ -164,7 +164,7 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 	if err != nil {
 		result := EnrichResult{
 			RuntimeContext: runtime,
-			Warning:        buildClinicPersistenceWarning("Clinic data was fetched, but I couldn't refresh the saved snapshot library locally. Follow-up turns may not be able to reuse it.", err),
+			Warning:        buildClinicPersistenceWarning("Clinic data was fetched, but Agent couldn't refresh the saved snapshot library locally. Follow-up turns may not be able to reuse it.", err),
 		}
 		if shouldReturnIntroReply(question, previousURL, spec) {
 			result.IntroReply = buildIntroReply(runtime, false)
@@ -410,9 +410,9 @@ func buildIntroReply(runtime codex.RuntimeContext, saved bool) string {
 
 	var sb strings.Builder
 	if saved {
-		sb.WriteString("I saved this Clinic slow query snapshot locally.\n")
+		sb.WriteString("Agent saved this Clinic slow query snapshot locally.\n")
 	} else {
-		sb.WriteString("I fetched this Clinic slow query snapshot for this turn, but couldn't save it locally.\n")
+		sb.WriteString("Agent fetched this Clinic slow query snapshot for this turn, but couldn't save it locally.\n")
 	}
 	sb.WriteString("- Cluster: ")
 	sb.WriteString(strings.TrimSpace(clinic.ClusterID))

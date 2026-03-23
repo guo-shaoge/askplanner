@@ -81,7 +81,7 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 			record.appendTurn(question, result.Answer)
 			if err := r.store.Put(record); err != nil {
 				log.Printf("[codex] persist session after resume failed for %s: %v", conversationKey, err)
-				return appendAnswerWarning(result.Answer, buildSessionStoreWarning("I answered this turn, but couldn't save the local session history. Follow-up turns may start a new session.", err)), nil
+				return appendAnswerWarning(result.Answer, buildSessionStoreWarning("Agent answered this turn, but couldn't save the local session history. Follow-up turns may start a new session.", err)), nil
 			}
 			log.Printf("[codex] answer done conversation=%s mode=resume elapsed=%s", conversationKey, time.Since(start))
 			return result.Answer, nil
@@ -121,7 +121,7 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 	}
 	if err := r.store.Put(record); err != nil {
 		log.Printf("[codex] persist new session failed for %s: %v", conversationKey, err)
-		return appendAnswerWarning(result.Answer, buildSessionStoreWarning("I answered this turn, but couldn't save the local session history. Follow-up turns may start a new session.", err)), nil
+		return appendAnswerWarning(result.Answer, buildSessionStoreWarning("Agent answered this turn, but couldn't save the local session history. Follow-up turns may start a new session.", err)), nil
 	}
 	log.Printf("[codex] answer done conversation=%s mode=new session=%s elapsed=%s",
 		conversationKey, result.SessionID, time.Since(start))
@@ -130,7 +130,7 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 
 func (r *Responder) Reset(conversationKey string) error {
 	if err := r.store.Delete(conversationKey); err != nil {
-		return usererr.WrapLocalStorage("I couldn't reset the local session history. Please retry.", err)
+		return usererr.WrapLocalStorage("Agent couldn't reset the local session history. Please retry.", err)
 	}
 	return nil
 }

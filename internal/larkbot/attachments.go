@@ -36,7 +36,7 @@ func saveDirectAttachment(ctx context.Context, apiClient *lark.Client, manager *
 		ImportedAt:   resource.messageCreate,
 	})
 	if err != nil {
-		return "", usererr.WrapLocalStorage("I couldn't save the attachment to the local library. Please retry.", err)
+		return "", usererr.WrapLocalStorage("Agent couldn't save the attachment to the local library. Please retry.", err)
 	}
 	return buildSaveSummary("Saved", []attachments.SaveResult{*result}), nil
 }
@@ -66,7 +66,7 @@ func downloadRecentAttachments(ctx context.Context, apiClient *lark.Client, mana
 		})
 		_ = os.Remove(resource.tempPath)
 		if importErr != nil {
-			return "", codex.AttachmentContext{}, usererr.WrapLocalStorage("I couldn't save the downloaded attachments to the local library. Please retry.", importErr)
+			return "", codex.AttachmentContext{}, usererr.WrapLocalStorage("Agent couldn't save the downloaded attachments to the local library. Please retry.", importErr)
 		}
 		results = append(results, *result)
 	}
@@ -81,7 +81,7 @@ func downloadRecentAttachments(ctx context.Context, apiClient *lark.Client, mana
 func buildAttachmentContext(manager *attachments.Manager, userKey string) (codex.AttachmentContext, error) {
 	library, err := manager.Snapshot(userKey)
 	if err != nil {
-		return codex.AttachmentContext{}, usererr.WrapLocalStorage("I couldn't load your saved attachments from local storage. Please retry.", err)
+		return codex.AttachmentContext{}, usererr.WrapLocalStorage("Agent couldn't load your saved attachments from local storage. Please retry.", err)
 	}
 	items := library.Items
 	if len(items) > promptAttachmentSummaryLimit {
@@ -167,13 +167,13 @@ func findRecentAttachmentMessages(ctx context.Context, apiClient *lark.Client, e
 
 		resp, err := apiClient.Im.V1.Message.List(ctx, req.Build())
 		if err != nil {
-			return nil, classifyFeishuOperationError(err, "I couldn't list recent Feishu messages for `/upload_n`. Please retry.")
+			return nil, classifyFeishuOperationError(err, "Agent couldn't list recent Feishu messages for `/upload_n`. Please retry.")
 		}
 		if resp == nil {
 			return nil, usererr.New(usererr.KindUnavailable, "Feishu returned an empty response while listing recent messages. Please retry.")
 		}
 		if !resp.Success() {
-			return nil, classifyFeishuResponseError(feishuOpListRecentMessages, "I couldn't list recent Feishu messages for `/upload_n`. Please retry.", resp.Code, resp.Msg)
+			return nil, classifyFeishuResponseError(feishuOpListRecentMessages, "Agent couldn't list recent Feishu messages for `/upload_n`. Please retry.", resp.Code, resp.Msg)
 		}
 		if resp.Data == nil || len(resp.Data.Items) == 0 {
 			break
@@ -247,7 +247,7 @@ func downloadResourceFromEvent(ctx context.Context, apiClient *lark.Client, temp
 	case "file":
 		var payload larkim.MessageFile
 		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-			return nil, usererr.Wrap(usererr.KindInvalidInput, "I couldn't parse the Feishu file payload. Please resend the file.", err)
+			return nil, usererr.Wrap(usererr.KindInvalidInput, "Agent couldn't parse the Feishu file payload. Please resend the file.", err)
 		}
 		if strings.TrimSpace(payload.FileKey) == "" {
 			return nil, usererr.New(usererr.KindInvalidInput, "This Feishu file message is missing its file key. Please resend the file.")
@@ -256,7 +256,7 @@ func downloadResourceFromEvent(ctx context.Context, apiClient *lark.Client, temp
 	case "image":
 		var payload larkim.MessageImage
 		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-			return nil, usererr.Wrap(usererr.KindInvalidInput, "I couldn't parse the Feishu image payload. Please resend the image.", err)
+			return nil, usererr.Wrap(usererr.KindInvalidInput, "Agent couldn't parse the Feishu image payload. Please resend the image.", err)
 		}
 		if strings.TrimSpace(payload.ImageKey) == "" {
 			return nil, usererr.New(usererr.KindInvalidInput, "This Feishu image message is missing its image key. Please resend the image.")
@@ -275,10 +275,10 @@ func downloadMessageResourceToTemp(ctx context.Context, apiClient *lark.Client, 
 			Type(resourceType).
 			Build())
 	if err != nil {
-		return nil, classifyFeishuOperationError(err, "I couldn't download the attachment from Feishu. Please retry or resend it.")
+		return nil, classifyFeishuOperationError(err, "Agent couldn't download the attachment from Feishu. Please retry or resend it.")
 	}
 	if resp != nil && !resp.Success() {
-		return nil, classifyFeishuResponseError(feishuOpDownloadAttachment, "I couldn't download the attachment from Feishu. Please retry or resend it.", resp.Code, resp.Msg)
+		return nil, classifyFeishuResponseError(feishuOpDownloadAttachment, "Agent couldn't download the attachment from Feishu. Please retry or resend it.", resp.Code, resp.Msg)
 	}
 	if resp == nil || resp.File == nil {
 		return nil, usererr.New(usererr.KindUnavailable, "Feishu returned an empty attachment response. Please retry or resend it.")
@@ -299,16 +299,16 @@ func downloadMessageResourceToTemp(ctx context.Context, apiClient *lark.Client, 
 
 	tempFile, err := os.CreateTemp(tempRoot, ".download-*"+ext)
 	if err != nil {
-		return nil, usererr.WrapLocalStorage("I couldn't create local temporary storage for the attachment. Please retry.", err)
+		return nil, usererr.WrapLocalStorage("Agent couldn't create local temporary storage for the attachment. Please retry.", err)
 	}
 	tempPath := tempFile.Name()
 	if err := tempFile.Close(); err != nil {
 		_ = os.Remove(tempPath)
-		return nil, usererr.WrapLocalStorage("I couldn't prepare local temporary storage for the attachment. Please retry.", err)
+		return nil, usererr.WrapLocalStorage("Agent couldn't prepare local temporary storage for the attachment. Please retry.", err)
 	}
 	if err := resp.WriteFile(tempPath); err != nil {
 		_ = os.Remove(tempPath)
-		return nil, usererr.WrapLocalStorage("I couldn't write the downloaded attachment to local temporary storage. Please retry.", err)
+		return nil, usererr.WrapLocalStorage("Agent couldn't write the downloaded attachment to local temporary storage. Please retry.", err)
 	}
 
 	log.Printf("[larkbot] downloaded %s message_id=%s file_key=%s temp=%s", resourceType, messageID, fileKey, tempPath)

@@ -77,7 +77,7 @@ func main() {
 		}
 		if question == "reset" {
 			if err := responder.Reset(conversationKey); err != nil {
-				fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't reset the current session. Please retry."))
+				fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't reset the current session. Please retry."))
 			} else {
 				fmt.Println("Session reset.")
 				fmt.Println()
@@ -92,12 +92,12 @@ func main() {
 		if cmd, matched, err := admin.ParseCommand(question); matched {
 			fmt.Println()
 			if err != nil {
-				fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
+				fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
 			}
 			answer, err := runAdminCommand(ctx, workspaceManager, responder, cmd)
 			if err != nil {
-				fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
+				fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
 			}
 			fmt.Println(answer)
@@ -107,12 +107,12 @@ func main() {
 		if cmd, matched, err := workspace.ParseCommand(question); matched {
 			fmt.Println()
 			if err != nil {
-				fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
+				fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
 			}
 			answer, err := runWorkspaceCommand(ctx, workspaceManager, responder, prefetcher, conversationKey, clinicUserKey, cmd)
 			if err != nil {
-				fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
+				fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
 			}
 			fmt.Println(answer)
@@ -124,7 +124,7 @@ func main() {
 		start := time.Now()
 		ws, err := workspaceManager.Ensure(ctx, clinicUserKey)
 		if err != nil {
-			fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
+			fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 			continue
 		}
 		enriched, err := prefetcher.Enrich(ctx, clinicUserKey, question, workspace.BindRuntimeContext(codex.RuntimeContext{}, ws))
@@ -134,7 +134,7 @@ func main() {
 				fmt.Printf("%s\n\n", msg)
 				continue
 			}
-			fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
+			fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 			continue
 		}
 		enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
@@ -146,7 +146,7 @@ func main() {
 
 		answer, err := responder.AnswerWithContext(ctx, conversationKey, question, enriched.RuntimeContext)
 		if err != nil {
-			fmt.Printf("%s\n\n", usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
+			fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 			continue
 		}
 		if strings.TrimSpace(enriched.Warning) != "" {

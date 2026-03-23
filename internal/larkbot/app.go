@@ -141,7 +141,7 @@ func (a *App) newEventHandler() *dispatcher.EventDispatcher {
 				answer, err := a.answerEvent(ctx, event)
 				if err != nil {
 					log.Printf("[larkbot] handle event error: %v (message_id=%s)", err, messageID)
-					answer = usererr.OrDefault(err, "I couldn't process that request. Please retry. If it keeps failing, check the relay logs.")
+					answer = usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs.")
 				}
 
 				reply, err := buildReplyBody(answer)

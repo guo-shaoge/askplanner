@@ -219,7 +219,7 @@ func TestPrefetcherReturnsIntroReplyForNewClinicLink(t *testing.T) {
 	if enriched.RuntimeContext.Clinic == nil {
 		t.Fatalf("expected clinic context")
 	}
-	if !strings.Contains(enriched.IntroReply, "I saved this Clinic slow query snapshot locally.") {
+	if !strings.Contains(enriched.IntroReply, "Agent saved this Clinic slow query snapshot locally.") {
 		t.Fatalf("unexpected intro reply: %q", enriched.IntroReply)
 	}
 	if !strings.Contains(enriched.IntroReply, "Tell me what you want to do next") {
