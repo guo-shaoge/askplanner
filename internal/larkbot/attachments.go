@@ -16,6 +16,7 @@ import (
 
 	"lab/askplanner/internal/attachments"
 	"lab/askplanner/internal/codex"
+	"lab/askplanner/internal/selfcmd"
 	"lab/askplanner/internal/workspace"
 )
 
@@ -61,6 +62,14 @@ func prepareReply(ctx context.Context, apiClient *lark.Client, manager *attachme
 		attachmentCtx, err := buildAttachmentContext(manager, userKey)
 		if err != nil {
 			return nil, err
+		}
+		if selfcmd.IsWhoAmI(text) {
+			return &preparedReply{
+				directReply:     buildWhoAmIReply(userKey, conversationKey),
+				skipCodex:       true,
+				conversationKey: conversationKey,
+				userKey:         userKey,
+			}, nil
 		}
 		if wsCmd, matched, err := workspace.ParseCommand(text); matched {
 			if err != nil {
@@ -119,6 +128,14 @@ func saveDirectAttachment(ctx context.Context, apiClient *lark.Client, manager *
 		return "", err
 	}
 	return buildSaveSummary("Saved", []attachments.SaveResult{*result}), nil
+}
+
+func buildWhoAmIReply(userKey, conversationKey string) string {
+	return strings.TrimSpace(fmt.Sprintf(
+		"User Key: %s\nConversation Key: %s",
+		strings.TrimSpace(userKey),
+		strings.TrimSpace(conversationKey),
+	))
 }
 
 // downloadRecentAttachments powers /upload_N by walking backward from the

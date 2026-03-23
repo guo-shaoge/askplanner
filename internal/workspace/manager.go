@@ -399,6 +399,23 @@ func (m *Manager) Sweep(ctx context.Context) error {
 	return nil
 }
 
+func (m *Manager) ResetUser(ctx context.Context, userKey string) (string, error) {
+	start := time.Now()
+	lock, userKey, err := m.lockUser(userKey, false)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+
+	log.Printf("[workspace] reset user start user=%s", userKey)
+	if err := m.removeWorkspaceLocked(ctx, userKey); err != nil {
+		return "", err
+	}
+	rootDir := filepath.Join(m.usersDir, userKey, "root")
+	log.Printf("[workspace] reset user done user=%s elapsed=%s", userKey, time.Since(start))
+	return rootDir, nil
+}
+
 func (m *Manager) StartBackgroundJobs(ctx context.Context) {
 	if m.agentRulesSyncInterval > 0 {
 		go func() {

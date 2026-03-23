@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -126,6 +127,25 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 
 func (r *Responder) Reset(conversationKey string) error {
 	return r.store.Delete(conversationKey)
+}
+
+func (r *Responder) ResetByWorkDirPrefix(workDirPrefix string) (int, error) {
+	workDirPrefix = strings.TrimSpace(workDirPrefix)
+	if workDirPrefix == "" {
+		return 0, fmt.Errorf("workdir prefix is empty")
+	}
+	cleanPrefix := filepath.Clean(workDirPrefix)
+	return r.store.DeleteIf(func(record SessionRecord) bool {
+		workDir := strings.TrimSpace(record.WorkDir)
+		if workDir == "" {
+			return false
+		}
+		workDir = filepath.Clean(workDir)
+		if workDir == cleanPrefix {
+			return true
+		}
+		return strings.HasPrefix(workDir, cleanPrefix+string(filepath.Separator))
+	})
 }
 
 func (r *Responder) canResume(record SessionRecord, now time.Time, workDir, envHash string) (bool, string) {

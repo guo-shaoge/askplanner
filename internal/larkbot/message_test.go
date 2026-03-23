@@ -145,3 +145,45 @@ func TestBuildConversationKeyUsesThreadAndUser(t *testing.T) {
 		t.Fatalf("conversation key = %q", got)
 	}
 }
+
+func TestPrepareReplyHandlesWhoAmI(t *testing.T) {
+	msgType := "text"
+	content := `{"text":"/whoami"}`
+	openID := "ou_user"
+	threadID := "omt-thread"
+	messageID := "om_message"
+	manager, err := attachments.NewManager(t.TempDir(), 10)
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				MessageType: &msgType,
+				Content:     &content,
+				ThreadId:    &threadID,
+				MessageId:   &messageID,
+			},
+			Sender: &larkim.EventSender{
+				SenderId: &larkim.UserId{
+					OpenId: &openID,
+				},
+			},
+		},
+	}
+
+	reply, err := prepareReply(context.Background(), nil, manager, event)
+	if err != nil {
+		t.Fatalf("prepareReply returned error: %v", err)
+	}
+	if !reply.skipCodex {
+		t.Fatalf("expected /whoami to skip codex")
+	}
+	if !strings.Contains(reply.directReply, "User Key: ou_user") {
+		t.Fatalf("reply missing user key: %s", reply.directReply)
+	}
+	if !strings.Contains(reply.directReply, "Conversation Key: lark:thread:omt-thread:user:ou_user") {
+		t.Fatalf("reply missing conversation key: %s", reply.directReply)
+	}
+}
