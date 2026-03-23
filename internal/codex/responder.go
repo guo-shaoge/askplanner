@@ -11,8 +11,13 @@ import (
 	"lab/askplanner/internal/config"
 )
 
+type runnerClient interface {
+	RunNew(ctx context.Context, workDir, prompt string) (*RunResult, error)
+	RunResume(ctx context.Context, workDir, sessionID, prompt string) (*RunResult, error)
+}
+
 type Responder struct {
-	runner         *Runner
+	runner         runnerClient
 	store          *FileSessionStore
 	prompt         string
 	promptHash     string
@@ -93,6 +98,7 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 		log.Printf("[codex] resume skipped for %s: %s", conversationKey, resumeReason)
 	}
 
+	runtime = r.hydrateInitialRuntime(ctx, conversationKey, runtime)
 	initialPrompt := BuildInitialPrompt(r.prompt, summarizeTurns(record.Turns), question, runtime)
 	result, err := r.runner.RunNew(ctx, workDir, initialPrompt)
 	if err != nil {
@@ -182,6 +188,20 @@ func (r *Responder) environmentHashForRuntime(runtime RuntimeContext, workDir st
 		return strings.TrimSpace(runtime.Workspace.EnvironmentHash)
 	}
 	return PromptHash(workDir)
+}
+
+func (r *Responder) hydrateInitialRuntime(ctx context.Context, conversationKey string, runtime RuntimeContext) RuntimeContext {
+	if runtime.Thread != nil || runtime.ThreadLoader == nil {
+		return runtime
+	}
+	threadCtx, err := runtime.ThreadLoader(ctx)
+	if err != nil {
+		log.Printf("[codex] initial thread context unavailable conversation=%s: %v", conversationKey, err)
+		return runtime
+	}
+	runtime.Thread = threadCtx
+	runtime.ThreadLoader = nil
+	return runtime
 }
 
 func summarizeTurns(turns []Turn) string {

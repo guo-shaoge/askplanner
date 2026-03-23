@@ -10,6 +10,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 
 	"lab/askplanner/internal/attachments"
+	"lab/askplanner/internal/codex"
 	"lab/askplanner/internal/selfcmd"
 	"lab/askplanner/internal/workspace"
 )
@@ -26,7 +27,16 @@ func prepareReply(ctx context.Context, apiClient *lark.Client, manager *attachme
 
 	switch extractMessageType(event) {
 	case "text", "post":
-		return prepareTextLikeReply(ctx, apiClient, manager, event, userKey, conversationKey)
+		reply, err := prepareTextLikeReply(ctx, apiClient, manager, event, userKey, conversationKey)
+		if err != nil || reply == nil || reply.skipCodex {
+			return reply, err
+		}
+		if apiClient != nil && extractThreadID(event) != "" {
+			reply.threadCtxLoader = func(loaderCtx context.Context) (*codex.ThreadContext, error) {
+				return maybeBuildThreadContext(loaderCtx, apiClient, event)
+			}
+		}
+		return reply, nil
 	case "file", "image":
 		if isGroupChat(event) {
 			return nil, fmt.Errorf("group %s messages should not reach prepareReply", extractMessageType(event))

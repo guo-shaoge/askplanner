@@ -117,6 +117,7 @@ func TestHandlePreparedReplyPrefixesAnswerForStandardQuestion(t *testing.T) {
 		question:        "select * from t",
 		prefix:          "Downloaded 1 item(s).",
 		attachmentCtx:   codex.AttachmentContext{RootDir: "/tmp/original-files"},
+		threadCtx:       &codex.ThreadContext{ThreadID: "omt-thread"},
 		conversationKey: "conv-1",
 		userKey:         "ou_user",
 	}
@@ -142,6 +143,9 @@ func TestHandlePreparedReplyPrefixesAnswerForStandardQuestion(t *testing.T) {
 	}
 	if responder.lastRuntime.Workspace == nil || responder.lastRuntime.Workspace.RootDir != ws.RootDir {
 		t.Fatalf("responder workspace root = %+v", responder.lastRuntime.Workspace)
+	}
+	if responder.lastRuntime.Thread == nil || responder.lastRuntime.Thread.ThreadID != "omt-thread" {
+		t.Fatalf("responder thread context = %+v", responder.lastRuntime.Thread)
 	}
 }
 
@@ -171,6 +175,51 @@ func TestHandlePreparedReplyUsesIntroReplyWithoutCallingResponder(t *testing.T) 
 	}
 	if responder.calls != 0 {
 		t.Fatalf("responder calls = %d, want 0", responder.calls)
+	}
+}
+
+func TestHandlePreparedReplyPassesThreadContextLoaderToResponder(t *testing.T) {
+	ws := newWorkspaceFixture()
+	responder := &fakeResponder{answer: "final answer"}
+	prefetcher := &fakePrefetcher{passthrough: true}
+	workspaceSvc := &fakeWorkspaceService{ensureWS: ws}
+	loads := 0
+
+	prepared := &preparedReply{
+		question:        "select * from t",
+		conversationKey: "conv-thread-new",
+		userKey:         "ou_user",
+		threadCtxLoader: func(ctx context.Context) (*codex.ThreadContext, error) {
+			loads++
+			return &codex.ThreadContext{ThreadID: "omt-thread"}, nil
+		},
+	}
+
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	if err != nil {
+		t.Fatalf("handlePreparedReply error: %v", err)
+	}
+	if got != "final answer" {
+		t.Fatalf("result = %q", got)
+	}
+	if loads != 0 {
+		t.Fatalf("thread context loads = %d, want 0", loads)
+	}
+	if responder.lastRuntime.Thread != nil {
+		t.Fatalf("responder thread context = %+v, want nil", responder.lastRuntime.Thread)
+	}
+	if responder.lastRuntime.ThreadLoader == nil {
+		t.Fatalf("responder thread loader = nil, want non-nil")
+	}
+	threadCtx, err := responder.lastRuntime.ThreadLoader(context.Background())
+	if err != nil {
+		t.Fatalf("runtime thread loader returned error: %v", err)
+	}
+	if loads != 1 {
+		t.Fatalf("thread context loads = %d, want 1 after explicit load", loads)
+	}
+	if threadCtx == nil || threadCtx.ThreadID != "omt-thread" {
+		t.Fatalf("loaded thread context = %+v", threadCtx)
 	}
 }
 
@@ -285,5 +334,7 @@ func runtimeContextEmpty(runtime codex.RuntimeContext) bool {
 		len(runtime.Attachment.Items) == 0 &&
 		runtime.ClinicLibrary == nil &&
 		runtime.Clinic == nil &&
+		runtime.Thread == nil &&
+		runtime.ThreadLoader == nil &&
 		runtime.Workspace == nil
 }

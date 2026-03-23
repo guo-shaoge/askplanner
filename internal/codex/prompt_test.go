@@ -127,6 +127,43 @@ func TestBuildInitialPromptIncludesClinicContext(t *testing.T) {
 	}
 }
 
+func TestBuildInitialPromptIncludesThreadContext(t *testing.T) {
+	prompt := BuildInitialPrompt("base prompt", "", "what should I reply?", RuntimeContext{
+		Thread: &ThreadContext{
+			ThreadID:        "omt_thread_1",
+			RootMessageID:   "om_root",
+			ParentMessageID: "om_parent",
+			OmittedCount:    2,
+			Messages: []ThreadMessage{
+				{
+					MessageID:   "om_1",
+					SenderLabel: "user:ou_alice",
+					MessageType: "text",
+					CreatedAt:   time.Date(2026, 3, 20, 8, 0, 0, 0, time.UTC),
+					Content:     "最开始的问题\n  EXPLAIN root\n    child",
+				},
+			},
+		},
+	})
+
+	wantSnippets := []string{
+		"New-session Feishu thread context: thread_id=omt_thread_1",
+		"Use earlier thread messages below as context, but prioritize the latest user message.",
+		"root_message_id=om_root",
+		"parent_message_id=om_parent",
+		"At least 2 older thread messages omitted.",
+		"sender=user:ou_alice type=text message_id=om_1",
+		"最开始的问题",
+		"        EXPLAIN root",
+		"          child",
+	}
+	for _, snippet := range wantSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("prompt missing %q:\n%s", snippet, prompt)
+		}
+	}
+}
+
 func TestBuildResumePromptIncludesEmptyClinicLibrary(t *testing.T) {
 	prompt := BuildResumePrompt("what next", RuntimeContext{
 		ClinicLibrary: &ClinicLibraryContext{
@@ -148,5 +185,23 @@ func TestBuildResumePromptHandlesEmptyAttachmentLibrary(t *testing.T) {
 
 	if !strings.Contains(prompt, "Current top-level entries: none.") {
 		t.Fatalf("prompt missing empty-library marker:\n%s", prompt)
+	}
+}
+
+func TestBuildResumePromptDoesNotIncludeThreadContext(t *testing.T) {
+	prompt := BuildResumePrompt("what next", RuntimeContext{
+		Thread: &ThreadContext{
+			ThreadID: "omt_thread_1",
+			Messages: []ThreadMessage{{
+				MessageID:   "om_1",
+				SenderLabel: "user:ou_alice",
+				MessageType: "text",
+				Content:     "hello",
+			}},
+		},
+	})
+
+	if strings.Contains(prompt, "thread_id=omt_thread_1") {
+		t.Fatalf("resume prompt should not include thread context:\n%s", prompt)
 	}
 }
