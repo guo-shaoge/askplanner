@@ -1,4 +1,4 @@
-package main
+package larkbot
 
 import (
 	"context"
@@ -9,184 +9,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
-	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-
-	"lab/askplanner/internal/attachments"
 )
-
-func TestParseUploadCommand(t *testing.T) {
-	cmd := parseUploadCommand("/upload_3 analyze these files")
-	if !cmd.ok {
-		t.Fatalf("expected command to parse")
-	}
-	if cmd.count != 3 {
-		t.Fatalf("count = %d, want 3", cmd.count)
-	}
-	if cmd.remainder != "analyze these files" {
-		t.Fatalf("remainder = %q", cmd.remainder)
-	}
-
-	if bad := parseUploadCommand("/upload_x test"); bad.ok {
-		t.Fatalf("expected invalid command to be rejected")
-	}
-}
-
-func TestPrepareReplyExtractsPostMessagePreservingLayout(t *testing.T) {
-	msgType := "post"
-	content := `{"zh_cn":{"content":[[{"tag":"at","user_name":"OptX"}],[{"tag":"text","text":"这个查询计划还有优化空间吗"}],[{"tag":"text","text":"| id | estRows | task |"}],[{"tag":"text","text":"| Point_Get_1 | 1.00 | root |"}],[{"tag":"text","text":"> ref"}]]}}`
-	openID := "ou_user"
-	manager, err := attachments.NewManager(t.TempDir(), 10)
-	if err != nil {
-		t.Fatalf("NewManager returned error: %v", err)
-	}
-	event := &larkim.P2MessageReceiveV1{
-		Event: &larkim.P2MessageReceiveV1Data{
-			Message: &larkim.EventMessage{
-				MessageType: &msgType,
-				Content:     &content,
-			},
-			Sender: &larkim.EventSender{
-				SenderId: &larkim.UserId{
-					OpenId: &openID,
-				},
-			},
-		},
-	}
-
-	reply, err := prepareReply(context.Background(), nil, manager, event)
-	if err != nil {
-		t.Fatalf("prepareReply returned error: %v", err)
-	}
-	want := strings.Join([]string{
-		"@OptX",
-		"这个查询计划还有优化空间吗",
-		"| id | estRows | task |",
-		"| Point_Get_1 | 1.00 | root |",
-		"> ref",
-	}, "\n")
-	if reply.question != want {
-		t.Fatalf("question mismatch:\n got: %q\nwant: %q", reply.question, want)
-	}
-}
-
-func TestExtractTextMessagePreservesNewlinesWhenStrippingMentions(t *testing.T) {
-	msgType := "text"
-	text := `{"text":"@_user_1\n| id          | estRows |\n| Point_Get_1 | 1.00 |"}`
-	key := "@_user_1"
-	name := "OptX"
-	event := &larkim.P2MessageReceiveV1{
-		Event: &larkim.P2MessageReceiveV1Data{
-			Message: &larkim.EventMessage{
-				MessageType: &msgType,
-				Content:     &text,
-				Mentions: []*larkim.MentionEvent{{
-					Key:  &key,
-					Name: &name,
-				}},
-			},
-		},
-	}
-
-	got := extractQuestionText(event)
-	want := strings.Join([]string{
-		"| id | estRows |",
-		"| Point_Get_1 | 1.00 |",
-	}, "\n")
-	if got != want {
-		t.Fatalf("question mismatch:\n got: %q\nwant: %q", got, want)
-	}
-}
-
-func TestShouldHandleEventAcceptsGroupPostMentioningBot(t *testing.T) {
-	msgType := "post"
-	chatType := "group"
-	content := `{"zh_cn":{"content":[[{"tag":"at","user_name":"OptX"},{"tag":"text","text":" 这个查询计划还有优化空间吗"}]]}}`
-	name := "OptX"
-	event := &larkim.P2MessageReceiveV1{
-		Event: &larkim.P2MessageReceiveV1Data{
-			Message: &larkim.EventMessage{
-				MessageType: &msgType,
-				ChatType:    &chatType,
-				Content:     &content,
-				Mentions: []*larkim.MentionEvent{{
-					Name: &name,
-				}},
-			},
-		},
-	}
-
-	ok, reason := shouldHandleEvent(event, botIdentity{name: "OptX"})
-	if !ok {
-		t.Fatalf("shouldHandleEvent rejected group post: %s", reason)
-	}
-}
-
-func TestShouldHandleEventAcceptsGroupPostMentioningBotWithoutMentionsField(t *testing.T) {
-	msgType := "post"
-	chatType := "group"
-	content := `{"zh_cn":{"content":[[{"tag":"at","user_name":"OptX"},{"tag":"text","text":" 这个查询计划还有优化空间吗"}]]}}`
-	event := &larkim.P2MessageReceiveV1{
-		Event: &larkim.P2MessageReceiveV1Data{
-			Message: &larkim.EventMessage{
-				MessageType: &msgType,
-				ChatType:    &chatType,
-				Content:     &content,
-			},
-		},
-	}
-
-	ok, reason := shouldHandleEvent(event, botIdentity{name: "OptX"})
-	if !ok {
-		t.Fatalf("shouldHandleEvent rejected group post without mentions: %s", reason)
-	}
-}
-
-func TestBuildConversationKeyUsesThreadAndUser(t *testing.T) {
-	threadID := "omt-thread"
-	chatID := "oc_chat"
-	openID := "ou_user"
-	messageID := "om_message"
-
-	event := &larkim.P2MessageReceiveV1{
-		Event: &larkim.P2MessageReceiveV1Data{
-			Message: &larkim.EventMessage{
-				ThreadId:  &threadID,
-				ChatId:    &chatID,
-				MessageId: &messageID,
-			},
-			Sender: &larkim.EventSender{
-				SenderId: &larkim.UserId{
-					OpenId: &openID,
-				},
-			},
-		},
-	}
-
-	if got := buildConversationKey(event); got != "lark:thread:omt-thread:user:ou_user" {
-		t.Fatalf("conversation key = %q", got)
-	}
-}
-
-func TestBuildSaveSummaryDoesNotExposeLocalPath(t *testing.T) {
-	summary := buildSaveSummary("Downloaded", []attachments.SaveResult{{
-		UserDir: "/home/gjt/work/askplanner/.askplanner/lark-files/ou_xxx",
-		Item: attachments.Item{
-			Name:      "image_20260320_091914_om_x.png",
-			Type:      attachments.ItemTypeImage,
-			CreatedAt: time.Now(),
-		},
-	}})
-
-	if strings.Contains(summary, "/home/gjt/work/askplanner/.askplanner/lark-files/ou_xxx") {
-		t.Fatalf("summary leaked local path: %s", summary)
-	}
-	if !strings.Contains(summary, "image_20260320_091914_om_x.png [image]") {
-		t.Fatalf("summary missing file entry: %s", summary)
-	}
-}
 
 func TestWithTypingReactionAddsAndDeletesReaction(t *testing.T) {
 	var (
@@ -335,14 +160,6 @@ func TestWithTypingReactionCreateFailureDoesNotBlockRun(t *testing.T) {
 	}
 }
 
-func readJSONBody(r *http.Request, dst any) error {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(body, dst)
-}
-
 func TestBuildReplyBodyUsesPostMarkdown(t *testing.T) {
 	answer := strings.TrimSpace("## Result\n\nSee [TiDB Docs](https://docs.pingcap.com/tidb/stable/) for details.\n\n```sql\nselect 1;\n```")
 
@@ -405,4 +222,12 @@ func TestBuildReplyBodyNormalizesEmptyText(t *testing.T) {
 	if got := content.ZhCN.Content[0][0].Text; got != " " {
 		t.Fatalf("text = %q, want single space", got)
 	}
+}
+
+func readJSONBody(r *http.Request, dst any) error {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(body, dst)
 }
