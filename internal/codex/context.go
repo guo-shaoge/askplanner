@@ -6,6 +6,23 @@ type RuntimeContext struct {
 	Attachment    AttachmentContext
 	ClinicLibrary *ClinicLibraryContext
 	Clinic        *ClinicContext
+	Workspace     *WorkspaceContext
+}
+
+type WorkspaceContext struct {
+	RootDir         string
+	UserFilesDir    string
+	ClinicFilesDir  string
+	EnvironmentHash string
+	Repos           []WorkspaceRepoContext
+}
+
+type WorkspaceRepoContext struct {
+	Name           string
+	RelativePath   string
+	RequestedRef   string
+	ResolvedSHA    string
+	TrackingLatest bool
 }
 
 type ClinicLibraryContext struct {

@@ -8,6 +8,17 @@ import (
 
 func TestBuildInitialPromptIncludesAttachmentContext(t *testing.T) {
 	prompt := BuildInitialPrompt("base prompt", "older summary", "analyze the file", RuntimeContext{
+		Workspace: &WorkspaceContext{
+			RootDir:        "/tmp/ws-user-a",
+			UserFilesDir:   "/tmp/ws-user-a/user-files",
+			ClinicFilesDir: "/tmp/ws-user-a/clinic-files",
+			Repos: []WorkspaceRepoContext{{
+				Name:         "tidb",
+				RelativePath: "contrib/tidb",
+				RequestedRef: "main",
+				ResolvedSHA:  "abcdef1234567890",
+			}},
+		},
 		Attachment: AttachmentContext{
 			RootDir: "/tmp/user-a",
 			Items: []AttachmentItem{
@@ -28,6 +39,10 @@ func TestBuildInitialPromptIncludesAttachmentContext(t *testing.T) {
 	})
 
 	wantSnippets := []string{
+		"The current user workspace root is stored under: /tmp/ws-user-a",
+		"User-uploaded files are mounted in this workspace at: /tmp/ws-user-a/user-files",
+		"Saved Clinic artifacts are mounted in this workspace at: /tmp/ws-user-a/clinic-files",
+		"contrib/tidb requested_ref=main resolved_sha=abcdef1234567890",
 		"The current user's uploaded-file library is stored under: /tmp/user-a",
 		"/upload_3 analyze these files",
 		"If you cannot tell which file the user means, do not guess.",
