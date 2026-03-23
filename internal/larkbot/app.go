@@ -20,6 +20,8 @@ import (
 	"lab/askplanner/internal/workspace"
 )
 
+// App owns the long-lived dependencies and websocket lifecycle for the Feishu
+// bot process.
 type App struct {
 	appID       string
 	appSecret   string
@@ -33,6 +35,9 @@ type App struct {
 	bot         botIdentity
 }
 
+// New constructs a fully wired Lark bot application from process config.
+// It validates the mandatory Feishu credentials up front so startup fails
+// before we open the websocket loop.
 func New(cfg *config.Config) (*App, error) {
 	if strings.TrimSpace(cfg.FeishuAppID) == "" || strings.TrimSpace(cfg.FeishuAppSecret) == "" {
 		return nil, fmt.Errorf("FEISHU_APP_ID and FEISHU_APP_SECRET are required")
@@ -73,6 +78,8 @@ func New(cfg *config.Config) (*App, error) {
 	}, nil
 }
 
+// Run starts background maintenance and blocks on the Feishu websocket client
+// until the context is canceled or the client exits with an error.
 func (a *App) Run(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -127,6 +134,8 @@ func (a *App) newEventHandler() *dispatcher.EventDispatcher {
 				return nil
 			}
 
+			// Keep the SDK callback small: convert every accepted message into the
+			// same answer pipeline and always reply from one place.
 			return withTypingReaction(ctx, a.apiClient, messageID, func() error {
 				answer, err := a.answerEvent(ctx, event)
 				if err != nil {

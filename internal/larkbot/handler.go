@@ -45,6 +45,9 @@ func (a *App) answerEvent(ctx context.Context, event *larkim.P2MessageReceiveV1)
 	return answer, nil
 }
 
+// handlePreparedReply is the shared execution path after message parsing.
+// Normal questions, /upload_N follow-up questions, and /ws ... -- question all
+// flow through here so behavior stays aligned as the bot grows.
 func handlePreparedReply(ctx context.Context, responder responderClient, prefetcher prefetcherService, workspaceManager workspaceService, prepared *preparedReply) (string, error) {
 	if prepared.skipCodex {
 		return prepared.directReply, nil
@@ -67,6 +70,9 @@ func handlePreparedReply(ctx context.Context, responder responderClient, prefetc
 	return answer, nil
 }
 
+// runWorkspaceCommand keeps the user-facing status output coupled to the
+// underlying workspace mutation, then optionally re-enters the normal answer
+// pipeline with the updated workspace bound into runtime context.
 func runWorkspaceCommand(ctx context.Context, manager workspaceService, responder responderClient, prefetcher prefetcherService, prepared *preparedReply) (string, error) {
 	start := time.Now()
 	var (
@@ -103,6 +109,9 @@ func runWorkspaceCommand(ctx context.Context, manager workspaceService, responde
 	return status + "\n\n" + answer, nil
 }
 
+// answerPreparedQuestion owns the "question -> enrich runtime -> short-circuit
+// intro reply -> Codex answer" sequence used by both regular and workspace
+// flows. Keeping it centralized avoids subtle behavior drift.
 func answerPreparedQuestion(ctx context.Context, responder responderClient, prefetcher prefetcherService, prepared *preparedReply, ws *workspace.Workspace) (string, error) {
 	question := strings.TrimSpace(prepared.question)
 	if question == "" {

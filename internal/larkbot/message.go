@@ -16,6 +16,9 @@ type textMessageContent struct {
 	TextWithoutAtBot *string `json:"text_without_at_bot"`
 }
 
+// shouldHandleEvent applies the bot's product policy before we do any heavier
+// work: supported message types, direct messages, and whether a group message
+// is actually addressed to the bot.
 func shouldHandleEvent(event *larkim.P2MessageReceiveV1, bot botIdentity) (bool, string) {
 	msgType := extractMessageType(event)
 	if msgType == "" {
@@ -100,6 +103,8 @@ func decodePostMessageContent(raw string) (incomingPostMessageContent, bool) {
 	return payload, true
 }
 
+// extractQuestionText returns the user-visible question text regardless of
+// whether the source message was plain text or rich-text post content.
 func extractQuestionText(event *larkim.P2MessageReceiveV1) string {
 	if event == nil || event.Event == nil || event.Event.Message == nil || event.Event.Message.Content == nil {
 		return ""
@@ -412,6 +417,8 @@ func extractEventCreateTime(event *larkim.P2MessageReceiveV1) time.Time {
 	return t
 }
 
+// buildConversationKey keeps one Codex conversation per user/thread or
+// user/chat pair so group threads do not leak context across participants.
 func buildConversationKey(event *larkim.P2MessageReceiveV1) string {
 	if event == nil || event.Event == nil {
 		return "lark:unknown"

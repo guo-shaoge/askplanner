@@ -19,6 +19,9 @@ import (
 	"lab/askplanner/internal/workspace"
 )
 
+// prepareReply turns a raw Feishu event into a normalized handler input.
+// This is where message-type-specific behavior lives: plain questions,
+// attachment-only messages, /upload_N, and workspace commands.
 func prepareReply(ctx context.Context, apiClient *lark.Client, manager *attachments.Manager, event *larkim.P2MessageReceiveV1) (*preparedReply, error) {
 	userKey := extractPreferredSenderID(event)
 	if userKey == "" {
@@ -118,6 +121,8 @@ func saveDirectAttachment(ctx context.Context, apiClient *lark.Client, manager *
 	return buildSaveSummary("Saved", []attachments.SaveResult{*result}), nil
 }
 
+// downloadRecentAttachments powers /upload_N by walking backward from the
+// current message and importing the caller's recent file/image messages.
 func downloadRecentAttachments(ctx context.Context, apiClient *lark.Client, manager *attachments.Manager, event *larkim.P2MessageReceiveV1, userKey string, count int) (string, codex.AttachmentContext, error) {
 	refs, err := findRecentAttachmentMessages(ctx, apiClient, event, count)
 	if err != nil {
@@ -209,6 +214,7 @@ func buildSaveSummary(verb string, results []attachments.SaveResult) string {
 	return strings.TrimSpace(sb.String())
 }
 
+// parseUploadCommand recognizes `/upload_N` with an optional trailing question.
 func parseUploadCommand(text string) uploadCommand {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "/upload_") {
@@ -234,6 +240,9 @@ func parseUploadCommand(text string) uploadCommand {
 	}
 }
 
+// findRecentAttachmentMessages pages backward through the same chat and keeps
+// only older messages from the same sender and same thread, which matches the
+// mental model of "upload the files I just sent before this question".
 func findRecentAttachmentMessages(ctx context.Context, apiClient *lark.Client, event *larkim.P2MessageReceiveV1, count int) ([]attachmentRef, error) {
 	if count <= 0 {
 		return nil, nil

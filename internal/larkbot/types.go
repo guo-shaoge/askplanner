@@ -40,6 +40,8 @@ func (d *messageDedup) cleanup(maxAge time.Duration) {
 }
 
 type preparedReply struct {
+	// The handler first normalizes a raw Feishu event into this shape so the
+	// rest of the pipeline does not need to branch on message type again.
 	question        string
 	prefix          string
 	directReply     string
@@ -51,6 +53,8 @@ type preparedReply struct {
 }
 
 type uploadCommand struct {
+	// /upload_N optionally carries a trailing question. When the remainder is
+	// empty we only save files and reply with the import summary.
 	count     int
 	remainder string
 	ok        bool

@@ -11,6 +11,8 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
+// buildReplyBody always renders a post+markdown payload so the bot can send
+// code fences, links, and richer formatting without switching message types.
 func buildReplyBody(text string) (replyBody, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -37,6 +39,8 @@ func buildReplyBody(text string) (replyBody, error) {
 	}, nil
 }
 
+// withTypingReaction best-effort wraps slow replies with a temporary Typing
+// reaction. Reply execution must still proceed even if reaction APIs fail.
 func withTypingReaction(ctx context.Context, apiClient *lark.Client, messageID string, run func() error) error {
 	reactionID, err := addTypingReaction(ctx, apiClient, messageID)
 	if err != nil {
