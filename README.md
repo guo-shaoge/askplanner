@@ -219,6 +219,7 @@ go test ./...
 - [ ] support context management
 - [ ] support model management
 - [ ] slow query finder
+- [ ] optimize the response time, especially the first user input request
 
 ### implementation pespective
 - [ ] rotate log to avoid getting log too large
