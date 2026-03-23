@@ -148,7 +148,7 @@ FEISHU_BOT_NAME="askplanner" \
 ./bin/askplanner_larkbot
 ```
 
-In group chats, the bot only handles text messages that are explicitly addressed to it. The most reliable setup is to configure `FEISHU_BOT_NAME` (defaults to `askplanner`) so the bot can verify that the mention target is actually itself by matching the `name` field in the mentions list.
+In group chats, the bot only handles `text` and `post` rich-text messages that are explicitly addressed to it. The most reliable setup is to configure `FEISHU_BOT_NAME` (defaults to `askplanner`) so the bot can verify that the mention target is actually itself by matching the `name` field in the mentions list.
 
 The bot stores attachments in a persistent per-user library under `FEISHU_FILE_DIR`. Each sender gets a separate directory, and the library keeps at most `FEISHU_USER_FILE_MAX_ITEMS` top-level items (default `100`). When the limit is exceeded, the oldest top-level items are deleted first.
 
@@ -212,6 +212,7 @@ go test ./...
 - [x] support process image
 - [x] support process plan replayer(unzip replayer and start diagnose automatically)
 - [x] support diagnose by clinic link
+- [x] support Feishu rich-text (`post`) plan questions and quote-style refs ([#12](https://github.com/guo-shaoge/askplanner/issues/12))
 - [x] output a markdown file if output too long
 - [ ] error handling: make sure all errors should return to user clearly(like network issue, rate limte ect)
 - [ ] support process clinic in batch mode

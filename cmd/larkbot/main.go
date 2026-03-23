@@ -92,6 +92,25 @@ type postMDNode struct {
 	Text string `json:"text"`
 }
 
+type incomingPostMessageContent struct {
+	ZhCN *incomingPostLocale `json:"zh_cn,omitempty"`
+	EnUS *incomingPostLocale `json:"en_us,omitempty"`
+	JaJP *incomingPostLocale `json:"ja_jp,omitempty"`
+}
+
+type incomingPostLocale struct {
+	Title   string               `json:"title,omitempty"`
+	Content [][]incomingPostNode `json:"content"`
+}
+
+type incomingPostNode struct {
+	Tag      string `json:"tag"`
+	Text     string `json:"text,omitempty"`
+	Href     string `json:"href,omitempty"`
+	UserName string `json:"user_name,omitempty"`
+	Name     string `json:"name,omitempty"`
+}
+
 func (d *messageDedup) isDuplicate(messageID string) bool {
 	_, loaded := d.seen.LoadOrStore(messageID, time.Now())
 	return loaded
@@ -249,8 +268,8 @@ func prepareReply(ctx context.Context, apiClient *lark.Client, manager *attachme
 	conversationKey := buildConversationKey(event)
 
 	switch extractMessageType(event) {
-	case "text":
-		text := extractTextMessage(event, trimPtr(event.Event.Message.Content))
+	case "text", "post":
+		text := extractQuestionText(event)
 		command := parseUploadCommand(text)
 		if command.ok {
 			if command.count > manager.MaxItems() {
@@ -312,18 +331,18 @@ func shouldHandleEvent(event *larkim.P2MessageReceiveV1, bot botIdentity) (bool,
 		return false, "empty message type"
 	}
 	if !isGroupChat(event) {
-		if msgType == "text" || msgType == "file" || msgType == "image" {
+		if msgType == "text" || msgType == "post" || msgType == "file" || msgType == "image" {
 			return true, ""
 		}
 		return false, fmt.Sprintf("unsupported p2p message type=%s", msgType)
 	}
-	if msgType != "text" {
+	if msgType != "text" && msgType != "post" {
 		return false, fmt.Sprintf("unsupported group message type=%s", msgType)
 	}
-	if isTextDirectedToBot(event, bot) {
+	if isMessageDirectedToBot(event, bot) {
 		return true, ""
 	}
-	return false, fmt.Sprintf("group text not addressed to bot mentions=%d bot_name_set=%t", len(extractMentionKeys(event)), bot.name != "")
+	return false, fmt.Sprintf("group message not addressed to bot mentions=%d bot_name_set=%t", len(extractMentionKeys(event)), bot.name != "")
 }
 
 func isGroupChat(event *larkim.P2MessageReceiveV1) bool {
@@ -347,6 +366,17 @@ func isTextDirectedToBot(event *larkim.P2MessageReceiveV1, bot botIdentity) bool
 		return true
 	}
 	return mentionsBot(event, bot)
+}
+
+func isMessageDirectedToBot(event *larkim.P2MessageReceiveV1, bot botIdentity) bool {
+	switch extractMessageType(event) {
+	case "text":
+		return isTextDirectedToBot(event, bot)
+	case "post":
+		return mentionsBot(event, bot) || postMentionsBot(event, bot)
+	default:
+		return false
+	}
 }
 
 func extractMessageID(event *larkim.P2MessageReceiveV1) string {
@@ -699,6 +729,27 @@ func decodeTextMessageContent(raw string) (textMessageContent, bool) {
 	return payload, true
 }
 
+func decodePostMessageContent(raw string) (incomingPostMessageContent, bool) {
+	var payload incomingPostMessageContent
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return incomingPostMessageContent{}, false
+	}
+	return payload, true
+}
+
+func extractQuestionText(event *larkim.P2MessageReceiveV1) string {
+	if event == nil || event.Event == nil || event.Event.Message == nil || event.Event.Message.Content == nil {
+		return ""
+	}
+	raw := trimPtr(event.Event.Message.Content)
+	switch extractMessageType(event) {
+	case "post":
+		return extractPostMessage(raw)
+	default:
+		return extractTextMessage(event, raw)
+	}
+}
+
 func extractTextMessage(event *larkim.P2MessageReceiveV1, raw string) string {
 	payload, ok := decodeTextMessageContent(raw)
 	if !ok {
@@ -711,6 +762,85 @@ func extractTextMessage(event *larkim.P2MessageReceiveV1, raw string) string {
 		return stripMentionKeys(strings.TrimSpace(*payload.Text), extractMentionKeys(event))
 	}
 	return raw
+}
+
+func extractPostMessage(raw string) string {
+	payload, ok := decodePostMessageContent(raw)
+	if !ok {
+		return raw
+	}
+	locale := payload.firstLocale()
+	if locale == nil {
+		return raw
+	}
+
+	lines := make([]string, 0, len(locale.Content)+1)
+	if title := strings.TrimSpace(locale.Title); title != "" {
+		lines = append(lines, title)
+	}
+	for _, row := range locale.Content {
+		var line strings.Builder
+		for _, node := range row {
+			line.WriteString(extractPostNodeText(node))
+		}
+		lines = append(lines, strings.TrimSpace(normalizeInlineWhitespace(line.String())))
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func (c incomingPostMessageContent) firstLocale() *incomingPostLocale {
+	locales := []*incomingPostLocale{c.ZhCN, c.EnUS, c.JaJP}
+	for _, locale := range locales {
+		if locale == nil {
+			continue
+		}
+		if strings.TrimSpace(locale.Title) != "" || len(locale.Content) > 0 {
+			return locale
+		}
+	}
+	return nil
+}
+
+func extractPostNodeText(node incomingPostNode) string {
+	switch node.Tag {
+	case "text":
+		return node.Text
+	case "a":
+		text := strings.TrimSpace(node.Text)
+		href := strings.TrimSpace(node.Href)
+		switch {
+		case text != "" && href != "":
+			return fmt.Sprintf("[%s](%s)", text, href)
+		case text != "":
+			return text
+		default:
+			return href
+		}
+	case "at":
+		name := strings.TrimSpace(node.UserName)
+		if name == "" {
+			name = strings.TrimSpace(node.Name)
+		}
+		if name == "" {
+			return "@mention"
+		}
+		return "@" + name
+	case "img":
+		return "[image]"
+	case "media":
+		return "[media]"
+	default:
+		if text := strings.TrimSpace(node.Text); text != "" {
+			return node.Text
+		}
+		if name := strings.TrimSpace(node.UserName); name != "" {
+			return "@" + name
+		}
+		if name := strings.TrimSpace(node.Name); name != "" {
+			return "@" + name
+		}
+		return ""
+	}
 }
 
 func extractMentionKeys(event *larkim.P2MessageReceiveV1) []string {
@@ -747,6 +877,40 @@ func mentionsBot(event *larkim.P2MessageReceiveV1, bot botIdentity) bool {
 	return false
 }
 
+func postMentionsBot(event *larkim.P2MessageReceiveV1, bot botIdentity) bool {
+	if strings.TrimSpace(bot.name) == "" || event == nil || event.Event == nil || event.Event.Message == nil || event.Event.Message.Content == nil {
+		return false
+	}
+	if extractMessageType(event) != "post" {
+		return false
+	}
+	payload, ok := decodePostMessageContent(trimPtr(event.Event.Message.Content))
+	if !ok {
+		return false
+	}
+	target := strings.TrimSpace(bot.name)
+	for _, locale := range []*incomingPostLocale{payload.ZhCN, payload.EnUS, payload.JaJP} {
+		if locale == nil {
+			continue
+		}
+		for _, row := range locale.Content {
+			for _, node := range row {
+				if node.Tag != "at" {
+					continue
+				}
+				name := strings.TrimSpace(node.UserName)
+				if name == "" {
+					name = strings.TrimSpace(node.Name)
+				}
+				if name != "" && strings.EqualFold(name, target) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func stripMentionKeys(text string, keys []string) string {
 	text = strings.TrimSpace(text)
 	if text == "" || len(keys) == 0 {
@@ -756,9 +920,31 @@ func stripMentionKeys(text string, keys []string) string {
 		if key == "" {
 			continue
 		}
-		text = strings.ReplaceAll(text, key, " ")
+		text = strings.ReplaceAll(text, key, "")
 	}
-	return strings.Join(strings.Fields(text), " ")
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimSpace(normalizeInlineWhitespace(line))
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func normalizeInlineWhitespace(s string) string {
+	var b strings.Builder
+	prevSpace := false
+	for _, r := range s {
+		switch r {
+		case ' ', '\t', '\v', '\f', '\u00a0':
+			if !prevSpace {
+				b.WriteByte(' ')
+			}
+			prevSpace = true
+		default:
+			b.WriteRune(r)
+			prevSpace = false
+		}
+	}
+	return b.String()
 }
 
 func parseMillis(s string) time.Time {
