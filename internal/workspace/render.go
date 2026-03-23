@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"lab/askplanner/internal/codex"
@@ -51,13 +52,13 @@ func FormatStatus(w *Workspace) string {
 	var sb strings.Builder
 	sb.WriteString("Workspace ready.\n")
 	sb.WriteString("- Root: ")
-	sb.WriteString(w.RootDir)
+	sb.WriteString(displayPath(w.RootDir))
 	sb.WriteByte('\n')
 	sb.WriteString("- User Files: ")
-	sb.WriteString(w.UserFilesDir)
+	sb.WriteString(displayPath(w.UserFilesDir))
 	sb.WriteByte('\n')
 	sb.WriteString("- Clinic Files: ")
-	sb.WriteString(w.ClinicFilesDir)
+	sb.WriteString(displayPath(w.ClinicFilesDir))
 	sb.WriteByte('\n')
 	sb.WriteString("- Environment Hash: ")
 	sb.WriteString(w.EnvironmentHash)
@@ -79,4 +80,23 @@ func shortSHA(sha string) string {
 		return sha[:12]
 	}
 	return sha
+}
+
+func displayPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	normalized := filepath.ToSlash(filepath.Clean(path))
+	marker := "/.askplanner/"
+	if idx := strings.Index(normalized, marker); idx >= 0 {
+		return normalized[idx+len(marker):]
+	}
+	if normalized == ".askplanner" {
+		return ""
+	}
+	if idx := strings.Index(normalized, ".askplanner/"); idx == 0 {
+		return normalized[len(".askplanner/"):]
+	}
+	return normalized
 }

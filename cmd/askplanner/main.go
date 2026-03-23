@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"lab/askplanner/internal/admin"
 	"lab/askplanner/internal/clinic"
 	"lab/askplanner/internal/codex"
 	"lab/askplanner/internal/config"
+	"lab/askplanner/internal/selfcmd"
 	"lab/askplanner/internal/workspace"
 )
 
@@ -75,6 +77,26 @@ func main() {
 				fmt.Println("Session reset.")
 				fmt.Println()
 			}
+			continue
+		}
+		if selfcmd.IsWhoAmI(question) {
+			fmt.Println()
+			fmt.Printf("User Key: %s\nConversation Key: %s\n\n", clinicUserKey, conversationKey)
+			continue
+		}
+		if cmd, matched, err := admin.ParseCommand(question); matched {
+			fmt.Println()
+			if err != nil {
+				fmt.Printf("Error: %v\n\n", err)
+				continue
+			}
+			answer, err := runAdminCommand(ctx, workspaceManager, responder, cmd)
+			if err != nil {
+				fmt.Printf("Error: %v\n\n", err)
+				continue
+			}
+			fmt.Println(answer)
+			fmt.Println()
 			continue
 		}
 		if cmd, matched, err := workspace.ParseCommand(question); matched {
@@ -173,4 +195,24 @@ func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, respon
 	}
 	log.Printf("[askplanner] workspace command answered conversation=%s action=%s elapsed=%s", conversationKey, cmd.Action, time.Since(start))
 	return status + "\n\n" + answer, nil
+}
+
+func runAdminCommand(ctx context.Context, workspaceManager *workspace.Manager, responder *codex.Responder, cmd *admin.Command) (string, error) {
+	start := time.Now()
+	switch cmd.Action {
+	case "reset-user":
+		workDir, err := workspaceManager.ResetUser(ctx, cmd.UserKey)
+		if err != nil {
+			return "", err
+		}
+		deletedSessions, err := responder.ResetByWorkDirPrefix(workDir)
+		if err != nil {
+			return "", err
+		}
+		log.Printf("[askplanner] admin reset-user done user=%s workdir=%s deleted_sessions=%d elapsed=%s",
+			cmd.UserKey, workDir, deletedSessions, time.Since(start))
+		return fmt.Sprintf("Reset user %s.\n- Workspace root: %s\n- Deleted sessions: %d", cmd.UserKey, workDir, deletedSessions), nil
+	default:
+		return "", fmt.Errorf("unsupported admin command: %s", cmd.Action)
+	}
 }

@@ -188,6 +188,16 @@ func TestBuildSaveSummaryDoesNotExposeLocalPath(t *testing.T) {
 	}
 }
 
+func TestBuildWhoAmIReply(t *testing.T) {
+	reply := buildWhoAmIReply("ou_xxx", "lark:thread:omt:user:ou_xxx")
+	if !strings.Contains(reply, "User Key: ou_xxx") {
+		t.Fatalf("reply missing user key: %s", reply)
+	}
+	if !strings.Contains(reply, "Conversation Key: lark:thread:omt:user:ou_xxx") {
+		t.Fatalf("reply missing conversation key: %s", reply)
+	}
+}
+
 func TestWithTypingReactionAddsAndDeletesReaction(t *testing.T) {
 	var (
 		createCalls int

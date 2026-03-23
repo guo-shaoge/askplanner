@@ -73,6 +73,24 @@ func (s *FileSessionStore) Delete(key string) error {
 	return s.saveLocked()
 }
 
+func (s *FileSessionStore) DeleteIf(match func(SessionRecord) bool) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var deleted int
+	for key, record := range s.records {
+		if match == nil || !match(record) {
+			continue
+		}
+		delete(s.records, key)
+		deleted++
+	}
+	if deleted == 0 {
+		return 0, nil
+	}
+	return deleted, s.saveLocked()
+}
+
 func (s *FileSessionStore) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
