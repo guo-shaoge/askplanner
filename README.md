@@ -76,6 +76,7 @@ The runtime is intentionally simple:
 
 - `cmd/askplanner` is the local REPL
 - `cmd/larkbot` is the Feishu/Lark websocket bot
+- `cmd/askplanner_usage` is the local usage dashboard web server
 - `internal/codex` is the active runtime
 
 ### Core Principle
@@ -122,6 +123,9 @@ git submodule update --init --recursive
 codex login
 
 make
+
+# optional: open a local usage dashboard at http://127.0.0.1:18080
+./bin/askplanner_usage
 
 # by default, log ouput to ./.askplanner/askplanner.log, and session info stored in ./.askplanner/sessions.json
 ./bin/askplanner_cli
@@ -205,6 +209,8 @@ Core variables:
 | `CODEX_SESSION_TTL_HOURS` | `24` | Session TTL |
 | `CODEX_TIMEOUT_SEC` | `120` | Timeout per Codex subprocess |
 | `LOG_FILE` | `.askplanner/askplanner.log` | Log file path |
+| `USAGE_HTTP_ADDR` | `127.0.0.1:18080` | Usage dashboard listen address |
+| `USAGE_LOG_TAIL_BYTES` | `4194304` | Max log bytes scanned per refresh |
 | `PROJECT_ROOT` | auto-detected | Walks up looking for `prompt` file |
 | `PROMPT_FILE` | `prompt` | Relative to project root |
 
@@ -249,6 +255,7 @@ Lark-specific variables:
 ```bash
 go build -o bin/askplanner_cli ./cmd/askplanner
 go build -o bin/askplanner_larkbot ./cmd/larkbot
+go build -o bin/askplanner_usage ./cmd/askplanner_usage
 go build -o bin/printprompt ./cmd/printprompt
 go test ./...
 ```

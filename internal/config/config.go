@@ -46,6 +46,10 @@ type Config struct {
 	// Logging
 	LogFile string // absolute path
 
+	// Usage dashboard
+	UsageHTTPAddr     string
+	UsageLogTailBytes int
+
 	// Lark (larkbot only)
 	FeishuAppID             string
 	FeishuAppSecret         string
@@ -92,6 +96,8 @@ func Load() (*Config, error) {
 		ClinicStoreDir:                    resolvePath(projectRoot, clinicStoreDir),
 		ClinicStoreMaxItems:               envAsInt("CLINIC_STORE_MAX_ITEMS", 50),
 		LogFile:                           resolvePath(projectRoot, envOrDefault("LOG_FILE", ".askplanner/askplanner.log")),
+		UsageHTTPAddr:                     strings.TrimSpace(envOrDefault("USAGE_HTTP_ADDR", "127.0.0.1:18080")),
+		UsageLogTailBytes:                 envAsInt("USAGE_LOG_TAIL_BYTES", 4*1024*1024),
 		FeishuAppID:                       os.Getenv("FEISHU_APP_ID"),
 		FeishuAppSecret:                   os.Getenv("FEISHU_APP_SECRET"),
 		FeishuBotName:                     strings.ToLower(strings.TrimSpace(envOrDefault("FEISHU_BOT_NAME", "askplanner"))),
