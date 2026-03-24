@@ -330,5 +330,5 @@ func formatAnswerWarning(warning string) string {
 	if warning == "" {
 		return ""
 	}
-	return "**Warning**:" + warning + "\n\n"
+	return "**Warning: " + warning + ". The bot has lost your previous conversation content.\n\n"
 }
