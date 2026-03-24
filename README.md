@@ -219,7 +219,7 @@ go test ./...
 - [ ] support process clinic in batch mode
 - [ ] support switch to different release version of tidb repo and tidb-docs repo
 - [ ] support context management
-- [ ] support model management
+- [x] support model management
 - [ ] slow query finder
 - [ ] optimize the response time, especially the first user input request
 
