@@ -154,5 +154,5 @@ func formatWarning(message string) string {
 	if message == "" {
 		return ""
 	}
-	return "Warning: " + message
+	return "**Warning**\n" + message
 }

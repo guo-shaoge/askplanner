@@ -97,6 +97,65 @@ Requires: **Go 1.23+**, **codex CLI** in PATH, git submodules initialized.
 | `FEISHU_FILE_DIR` | `<WORKSPACE_ROOT>/uploads` | Imported Feishu attachment root |
 | `FEISHU_USER_FILE_MAX_ITEMS` | `100` | Max stored attachments per user |
 
+## Workspace
+
+Each Lark bot user gets an isolated workspace so Codex CLI can explore TiDB source, docs, and skills independently per user. The workspace subsystem uses **shared git bare mirrors** plus **per-user git worktrees** to avoid cloning the full repositories for every user.
+
+### Directory Layout
+
+```
+<WORKSPACE_ROOT>/                        (default: .askplanner/workspaces)
+├── mirrors/                             # shared bare mirrors (all users share these)
+│   ├── tidb.git                         #   git clone --mirror of TiDB
+│   ├── agent-rules.git                  #   git clone --mirror of agent-rules
+│   └── tidb-docs.git                    #   git clone --mirror of tidb-docs
+├── users/<sanitized_user_key>/
+│   ├── root/                            # Codex CLI WorkDir for this user
+│   │   ├── contrib/
+│   │   │   ├── tidb/                    #   git worktree → mirrors/tidb.git
+│   │   │   ├── agent-rules/             #   git worktree → mirrors/agent-rules.git
+│   │   │   └── tidb-docs/               #   git worktree → mirrors/tidb-docs.git
+│   │   ├── user-files → <uploads>/<key> #   symlink to user's uploaded attachments
+│   │   └── clinic-files → <clinic>/<key>#   symlink to user's Clinic snapshots
+│   └── data/
+│       └── workspace.json               #   metadata: refs, SHAs, env hash, last active time
+├── locks/                               # per-user flock files
+│   ├── <user_key>.lock                  #   exclusive lock for workspace mutations
+│   └── gc.lock                          #   GC sweep lock
+└── .trash/
+```
+
+### Key Operations
+
+| Operation | Trigger | Behavior |
+|---|---|---|
+| `Ensure` | Every user question | Idempotently verifies/creates workspace. Uses blocking flock — must succeed. |
+| `SwitchRepo` | `/ws switch <repo> <ref>` | Fetches mirror, resolves ref, checks out worktree. Switching `tidb` auto-follows `tidb-docs` to the same branch if it exists. |
+| `Sync` | `/ws sync [repo\|all]` | Fetches latest from remote mirror, re-resolves current ref, re-checkouts. |
+| `Reset` | `/ws reset [repo\|all]` | Reverts repo(s) to their default branch/ref. |
+| `GC Sweep` | Background timer (`WORKSPACE_GC_INTERVAL_MIN`) | Scans `users/`, removes workspaces idle longer than `WORKSPACE_IDLE_TTL_HOURS`. Uses non-blocking lock — skips busy users. |
+
+`agent-rules` mirror is also synced on a separate background timer (`AGENT_RULES_SYNC_INTERVAL_MIN`), and its worktrees track the latest default branch automatically (`TrackLatest=true`).
+
+### Concurrency
+
+All workspace mutations (`SwitchRepo`, `Sync`, `Reset`) and reads (`Ensure`) acquire a **per-user exclusive flock** (`locks/<user_key>.lock`). This serializes all operations for the same user. GC Sweep uses a non-blocking lock and skips users whose lock is held.
+
+### Environment Hash
+
+`computeEnvironmentHash()` produces a SHA256 from the workspace root path and all repo states (`name|requestedRef|resolvedSHA|trackingLatest`). This hash is stored in `workspace.json` and attached to every Codex session record.
+
+When the hash changes (e.g., user switches branches), `canResume()` in the responder returns `false` with reason `"environment_changed"`, forcing a new Codex session. This guarantees the AI never continues a conversation based on stale source code.
+
+### `/ws` Commands
+
+```
+/ws status                              # show current workspace state
+/ws switch <repo> <ref> [-- question]   # switch repo to a branch/tag/SHA, optionally ask a question
+/ws sync [repo|all]                     # pull latest and re-checkout
+/ws reset [repo|all]                    # revert to default branch
+```
+
 ## Session Management
 
 - Keys: `cli:default` (CLI), `lark:thread:*` / `lark:chat:*:user:*` (bot)
