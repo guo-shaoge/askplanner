@@ -8,7 +8,7 @@ Here is an example of how to use it:
 ````text
 [Yes VPN-ON] [2026/03/19 6:32:52 Day-078] 192 :: ~/work/askplanner_v2 ‹main*› » ./bin/askplanner_cli
 askplanner v2 (backend: codex-cli, model: gpt-5.3-codex)
-Type your question, or 'quit' to exit. Use 'reset' to start a new session.
+Type your question, or 'quit' to exit. Use 'reset' to start a new session. Use '/model' to inspect or switch the model for this conversation.
 
 > hi
 
@@ -130,6 +130,7 @@ make
 The REPL supports:
 - regular questions
 - `reset` to drop the local Codex session
+- `/model`, `/model set <model>`, `/model effort <level>`, `/model reset`, `/model effort reset` for conversation-scoped model management
 - `quit` / `exit`
 
 ## Lark Bot
@@ -193,8 +194,12 @@ Core variables:
 |--------|---------|-------------|
 | `CODEX_BIN` | `codex` | Codex CLI binary |
 | `CODEX_MODEL` | `gpt-5.3-codex` | Codex model |
+| `CODEX_REASONING_EFFORT` | `medium` | Default reasoning effort used for Codex execution when the selected model does not expose a cache-derived default |
+| `CODEX_SANDBOX` | `read-only` | Sandbox mode for `codex exec` |
+| `CODEX_PROJECT_ROOT` | `.` | Working root for Codex |
+| `CODEX_PROMPT_COMMAND` | `bin/printprompt` | Prompt command, supports args such as `bin/printprompt --normalized` |
+| `CODEX_SESSION_STORE` | `.askplanner/codex_sessions.json` | Session store path |
 | `CODEX_REASONING_EFFORT` | `medium` | `low` / `medium` / `high` |
-| `CODEX_SANDBOX` | `read-only` | Always read-only |
 | `CODEX_SESSION_STORE` | `.askplanner/sessions.json` | Session store path |
 | `CODEX_MAX_TURNS` | `30` | Max turns before forcing a new Codex session |
 | `CODEX_SESSION_TTL_HOURS` | `24` | Session TTL |
@@ -259,7 +264,7 @@ go test ./...
 - [x] support switch to different release version of tidb repo and tidb-docs repo (https://github.com/guo-shaoge/askplanner/commit/4e11ec3ac9f319d5bec545eeb0d159a452bf7d56)
 - [ ] support process clinic in batch mode
 - [ ] support context management
-- [ ] support model management
+- [x] support model management
 - [ ] slow query finder
 - [ ] optimize the response time, especially the first user input request
 - [ ] add a watchdog/daemon to keep the askplanner background process alive

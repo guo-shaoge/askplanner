@@ -38,6 +38,8 @@ type SessionRecord struct {
 	TurnCount       int                     `json:"turn_count"`
 	Turns           []Turn                  `json:"turns,omitempty"`
 	LastError       string                  `json:"last_error,omitempty"`
+	ModelOverride           string    `json:"model_override,omitempty"`
+	ReasoningEffortOverride string    `json:"reasoning_effort_override,omitempty"`
 }
 
 type FileSessionStore struct {

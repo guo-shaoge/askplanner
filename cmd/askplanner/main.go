@@ -15,6 +15,7 @@ import (
 	"lab/askplanner/internal/clinic"
 	"lab/askplanner/internal/codex"
 	"lab/askplanner/internal/config"
+	"lab/askplanner/internal/modelcmd"
 	"lab/askplanner/internal/selfcmd"
 	"lab/askplanner/internal/usererr"
 	"lab/askplanner/internal/workspace"
@@ -52,7 +53,7 @@ func main() {
 	}
 
 	fmt.Printf("askplanner v2 (backend: codex-cli, model: %s)\n", cfg.CodexModel)
-	fmt.Println("Type your question, or 'quit' to exit. Use 'reset' to start a new session.")
+	fmt.Println("Type your question, or 'quit' to exit. Use 'reset' to start a new session. Use '/model' to inspect or switch the model for this conversation.")
 	fmt.Println()
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -96,6 +97,21 @@ func main() {
 				continue
 			}
 			answer, err := runAdminCommand(ctx, workspaceManager, responder, cmd)
+			if err != nil {
+				fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
+				continue
+			}
+			fmt.Println(answer)
+			fmt.Println()
+			continue
+		}
+		if cmd, matched, err := modelcmd.ParseCommand(question); matched {
+			fmt.Println()
+			if err != nil {
+				fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
+				continue
+			}
+			answer, err := runModelCommand(ctx, workspaceManager, responder, prefetcher, conversationKey, clinicUserKey, cmd)
 			if err != nil {
 				fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
@@ -159,6 +175,84 @@ func main() {
 		fmt.Println(answer)
 		fmt.Println()
 	}
+}
+
+func runModelCommand(ctx context.Context, workspaceManager *workspace.Manager, responder *codex.Responder, prefetcher *clinic.Prefetcher, conversationKey, userKey string, cmd *modelcmd.Command) (string, error) {
+	status := ""
+	switch cmd.Action {
+	case "status":
+		status = codex.FormatModelStatus(responder.GetModelState(conversationKey), "", false)
+	case "set":
+		result, err := responder.SetModel(conversationKey, cmd.Model)
+		if err != nil {
+			return "", err
+		}
+		summary := "Model settings updated for this conversation."
+		if !result.Changed {
+			summary = "Model settings unchanged for this conversation."
+		}
+		status = codex.FormatModelStatus(result.State, summary, result.SessionRestartNeeded)
+	case "effort":
+		result, err := responder.SetReasoningEffort(conversationKey, cmd.Effort)
+		if err != nil {
+			return "", err
+		}
+		summary := "Reasoning effort updated for this conversation."
+		if !result.Changed {
+			summary = "Reasoning effort unchanged for this conversation."
+		}
+		status = codex.FormatModelStatus(result.State, summary, result.SessionRestartNeeded)
+	case "reset-effort":
+		result, err := responder.ResetReasoningEffort(conversationKey)
+		if err != nil {
+			return "", err
+		}
+		summary := "Reasoning effort override cleared for this conversation."
+		if !result.Changed {
+			summary = "Reasoning effort already uses the default for this conversation."
+		}
+		status = codex.FormatModelStatus(result.State, summary, result.SessionRestartNeeded)
+	case "reset":
+		result, err := responder.ResetModel(conversationKey)
+		if err != nil {
+			return "", err
+		}
+		summary := "Model override cleared for this conversation."
+		if !result.Changed {
+			summary = "Model settings already use the default for this conversation."
+		}
+		status = codex.FormatModelStatus(result.State, summary, result.SessionRestartNeeded)
+	default:
+		return "", fmt.Errorf("unsupported model command: %s", cmd.Action)
+	}
+
+	if strings.TrimSpace(cmd.Question) == "" {
+		return status, nil
+	}
+
+	ws, err := workspaceManager.Ensure(ctx, userKey)
+	if err != nil {
+		return "", err
+	}
+	enriched, err := prefetcher.Enrich(ctx, userKey, cmd.Question, workspace.BindRuntimeContext(codex.RuntimeContext{}, ws))
+	if err != nil {
+		if msg := clinic.UserFacingMessage(err); msg != "" {
+			return joinReplySections(status, msg), nil
+		}
+		return "", err
+	}
+	enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
+	if strings.TrimSpace(enriched.IntroReply) != "" {
+		return joinReplySections(status, enriched.IntroReply, formatWarning(enriched.Warning)), nil
+	}
+	answer, err := responder.AnswerWithContext(ctx, conversationKey, cmd.Question, enriched.RuntimeContext)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(enriched.Warning) != "" {
+		answer = joinReplySections(formatWarning(enriched.Warning), answer)
+	}
+	return joinReplySections(status, answer), nil
 }
 
 func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, responder *codex.Responder, prefetcher *clinic.Prefetcher, conversationKey, userKey string, cmd *workspace.Command) (string, error) {

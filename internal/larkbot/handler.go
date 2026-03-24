@@ -16,6 +16,11 @@ import (
 
 type responderClient interface {
 	AnswerWithContext(ctx context.Context, conversationKey, question string, runtime codex.RuntimeContext) (string, error)
+	GetModelState(conversationKey string) codex.ModelState
+	SetModel(conversationKey, model string) (codex.ModelChangeResult, error)
+	ResetModel(conversationKey string) (codex.ModelChangeResult, error)
+	SetReasoningEffort(conversationKey, effort string) (codex.ModelChangeResult, error)
+	ResetReasoningEffort(conversationKey string) (codex.ModelChangeResult, error)
 	MarkWorkspaceChanged(userKey, sourceConversationKey string, notice codex.WorkspaceSessionNotice) error
 }
 
@@ -53,6 +58,9 @@ func handlePreparedReply(ctx context.Context, responder responderClient, prefetc
 	if prepared.skipCodex {
 		return prepared.directReply, nil
 	}
+	if prepared.modelCmd != nil {
+		return runModelCommand(ctx, workspaceManager, responder, prefetcher, prepared)
+	}
 	if prepared.workspaceCmd != nil {
 		return runWorkspaceCommand(ctx, workspaceManager, responder, prefetcher, prepared)
 	}
@@ -69,6 +77,70 @@ func handlePreparedReply(ctx context.Context, responder responderClient, prefetc
 		return joinReplySections(prepared.prefix, answer), nil
 	}
 	return answer, nil
+}
+
+func runModelCommand(ctx context.Context, workspaceManager workspaceService, responder responderClient, prefetcher prefetcherService, prepared *preparedReply) (string, error) {
+	status := ""
+	switch prepared.modelCmd.Action {
+	case "status":
+		status = codex.FormatModelStatus(responder.GetModelState(prepared.conversationKey), "", false)
+	case "set":
+		result, err := responder.SetModel(prepared.conversationKey, prepared.modelCmd.Model)
+		if err != nil {
+			return "", err
+		}
+		summary := "Model settings updated for this conversation."
+		if !result.Changed {
+			summary = "Model settings unchanged for this conversation."
+		}
+		status = codex.FormatModelStatus(result.State, summary, result.SessionRestartNeeded)
+	case "effort":
+		result, err := responder.SetReasoningEffort(prepared.conversationKey, prepared.modelCmd.Effort)
+		if err != nil {
+			return "", err
+		}
+		summary := "Reasoning effort updated for this conversation."
+		if !result.Changed {
+			summary = "Reasoning effort unchanged for this conversation."
+		}
+		status = codex.FormatModelStatus(result.State, summary, result.SessionRestartNeeded)
+	case "reset-effort":
+		result, err := responder.ResetReasoningEffort(prepared.conversationKey)
+		if err != nil {
+			return "", err
+		}
+		summary := "Reasoning effort override cleared for this conversation."
+		if !result.Changed {
+			summary = "Reasoning effort already uses the default for this conversation."
+		}
+		status = codex.FormatModelStatus(result.State, summary, result.SessionRestartNeeded)
+	case "reset":
+		result, err := responder.ResetModel(prepared.conversationKey)
+		if err != nil {
+			return "", err
+		}
+		summary := "Model override cleared for this conversation."
+		if !result.Changed {
+			summary = "Model settings already use the default for this conversation."
+		}
+		status = codex.FormatModelStatus(result.State, summary, result.SessionRestartNeeded)
+	default:
+		return "", fmt.Errorf("unsupported model command: %s", prepared.modelCmd.Action)
+	}
+
+	if strings.TrimSpace(prepared.question) == "" {
+		return status, nil
+	}
+
+	ws, err := workspaceManager.Ensure(ctx, prepared.userKey)
+	if err != nil {
+		return "", err
+	}
+	answer, err := answerPreparedQuestion(ctx, responder, prefetcher, prepared, ws)
+	if err != nil {
+		return "", err
+	}
+	return joinReplySections(status, answer), nil
 }
 
 // runWorkspaceCommand keeps the user-facing status output coupled to the

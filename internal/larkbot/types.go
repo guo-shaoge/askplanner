@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"lab/askplanner/internal/codex"
+	"lab/askplanner/internal/modelcmd"
 	"lab/askplanner/internal/workspace"
 )
 
@@ -53,6 +54,7 @@ type preparedReply struct {
 	attachmentCtx   codex.AttachmentContext
 	threadCtx       *codex.ThreadContext
 	threadCtxLoader func(context.Context) (*codex.ThreadContext, error)
+	modelCmd        *modelcmd.Command
 	workspaceCmd    *workspace.Command
 	conversationKey string
 	userKey         string

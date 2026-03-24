@@ -17,10 +17,10 @@ import (
 )
 
 type Runner struct {
-	Bin             string
-	Model           string
-	ReasoningEffort string
-	Sandbox         string
+	Bin                    string
+	DefaultModel           string
+	DefaultReasoningEffort string
+	Sandbox                string
 }
 
 type RunResult struct {
@@ -30,34 +30,50 @@ type RunResult struct {
 	Stderr    string
 }
 
-func (r *Runner) RunNew(ctx context.Context, workDir, prompt string) (*RunResult, error) {
+func (r *Runner) RunNew(ctx context.Context, workDir, model, reasoningEffort, prompt string) (*RunResult, error) {
 	args := []string{
 		"exec",
 		"--sandbox", r.Sandbox,
 		"--json",
 	}
-	if strings.TrimSpace(r.Model) != "" {
-		args = append(args, "--model", r.Model)
+	if resolvedModel := r.resolveModel(model); resolvedModel != "" {
+		args = append(args, "--model", resolvedModel)
 	}
-	if strings.TrimSpace(r.ReasoningEffort) != "" {
-		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", r.ReasoningEffort))
+	if resolvedReasoningEffort := r.resolveReasoningEffort(reasoningEffort); resolvedReasoningEffort != "" {
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", resolvedReasoningEffort))
 	}
 	return r.run(ctx, workDir, args, nil, prompt, true)
 }
 
-func (r *Runner) RunResume(ctx context.Context, workDir, sessionID, prompt string) (*RunResult, error) {
+func (r *Runner) RunResume(ctx context.Context, workDir, sessionID, model, reasoningEffort, prompt string) (*RunResult, error) {
 	args := []string{
 		"exec",
 		"resume",
 		"--json",
 	}
-	if strings.TrimSpace(r.Model) != "" {
-		args = append(args, "--model", r.Model)
+	if resolvedModel := r.resolveModel(model); resolvedModel != "" {
+		args = append(args, "--model", resolvedModel)
 	}
-	if strings.TrimSpace(r.ReasoningEffort) != "" {
-		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", r.ReasoningEffort))
+	if resolvedReasoningEffort := r.resolveReasoningEffort(reasoningEffort); resolvedReasoningEffort != "" {
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", resolvedReasoningEffort))
 	}
 	return r.run(ctx, workDir, args, []string{sessionID}, prompt, false)
+}
+
+func (r *Runner) resolveModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model != "" {
+		return model
+	}
+	return strings.TrimSpace(r.DefaultModel)
+}
+
+func (r *Runner) resolveReasoningEffort(effort string) string {
+	effort = strings.TrimSpace(strings.ToLower(effort))
+	if effort != "" {
+		return effort
+	}
+	return strings.TrimSpace(strings.ToLower(r.DefaultReasoningEffort))
 }
 
 func (r *Runner) run(ctx context.Context, workDir string, optionArgs, positionalArgs []string, prompt string, skipLogPrompt bool) (*RunResult, error) {
