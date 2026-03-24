@@ -127,6 +127,10 @@ make
 # optional: open a local usage dashboard at http://127.0.0.1:18080
 ./bin/askplanner_usage
 
+# dashboard pages:
+# - /            summary + user metrics
+# - /questions   paginated question detail view
+
 # by default, log ouput to ./.askplanner/askplanner.log, and session info stored in ./.askplanner/sessions.json
 ./bin/askplanner_cli
 ```
@@ -211,6 +215,7 @@ Core variables:
 | `LOG_FILE` | `.askplanner/askplanner.log` | Log file path |
 | `USAGE_HTTP_ADDR` | `127.0.0.1:18080` | Usage dashboard listen address |
 | `USAGE_LOG_TAIL_BYTES` | `4194304` | Max log bytes scanned per refresh |
+| `USAGE_QUESTIONS_PATH` | `.askplanner/usage_questions.jsonl` | Append-only question event store used for cumulative user/question metrics and paginated question details |
 | `PROJECT_ROOT` | auto-detected | Walks up looking for `prompt` file |
 | `PROMPT_FILE` | `prompt` | Relative to project root |
 

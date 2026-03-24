@@ -23,7 +23,10 @@ func main() {
 	}
 	defer logFile.Close()
 
-	collector := usage.NewCollector(cfg)
+	collector, err := usage.NewCollector(cfg)
+	if err != nil {
+		fatalStartup("build usage collector", err)
+	}
 	server, err := usage.NewServer(collector)
 	if err != nil {
 		fatalStartup("build usage dashboard", err)
