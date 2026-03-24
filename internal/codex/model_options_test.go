@@ -42,9 +42,6 @@ func TestParseModelOptionsFromCache(t *testing.T) {
 	if options[0].Slug != "gpt-5.4" || options[1].Slug != "gpt-5.3-codex" {
 		t.Fatalf("unexpected options: %+v", options)
 	}
-	if options[0].DefaultReasoningEffort != "high" {
-		t.Fatalf("default reasoning effort = %q, want high", options[0].DefaultReasoningEffort)
-	}
 	if len(options[0].SupportedReasoningEfforts) != 2 {
 		t.Fatalf("supported reasoning effort count = %d, want 2", len(options[0].SupportedReasoningEfforts))
 	}

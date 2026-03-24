@@ -61,16 +61,15 @@ func TestResponderLoadsThreadContextWhenResumeFallsBackToNewSession(t *testing.T
 	workDir := t.TempDir()
 	prompt := "base prompt"
 	responder := &Responder{
-		runner:                  &fakeRunner{resumeErr: errors.New("session missing")},
-		store:                   store,
-		prompt:                  prompt,
-		promptHash:              PromptHash(prompt),
-		defaultWorkDir:          workDir,
-		defaultModel:            "gpt-5.3-codex",
-		defaultReasoningEffort:  "medium",
-		defaultReasoningOptions: defaultReasoningEffortOptions(),
-		maxTurns:                30,
-		sessionTTL:              time.Hour,
+		runner:                 &fakeRunner{resumeErr: errors.New("session missing")},
+		store:                  store,
+		prompt:                 prompt,
+		promptHash:             PromptHash(prompt),
+		defaultWorkDir:         workDir,
+		defaultModel:           "gpt-5.3-codex",
+		defaultReasoningEffort: "medium",
+		maxTurns:               30,
+		sessionTTL:             time.Hour,
 	}
 
 	now := time.Now().UTC()
@@ -142,15 +141,14 @@ func TestResponderSkipsThreadLoaderOnSuccessfulResume(t *testing.T) {
 		runner: &fakeRunner{
 			resumeResult: &RunResult{Answer: "resume answer"},
 		},
-		store:                   store,
-		prompt:                  prompt,
-		promptHash:              PromptHash(prompt),
-		defaultWorkDir:          workDir,
-		defaultModel:            "gpt-5.3-codex",
-		defaultReasoningEffort:  "medium",
-		defaultReasoningOptions: defaultReasoningEffortOptions(),
-		maxTurns:                30,
-		sessionTTL:              time.Hour,
+		store:                  store,
+		prompt:                 prompt,
+		promptHash:             PromptHash(prompt),
+		defaultWorkDir:         workDir,
+		defaultModel:           "gpt-5.3-codex",
+		defaultReasoningEffort: "medium",
+		maxTurns:               30,
+		sessionTTL:             time.Hour,
 	}
 
 	now := time.Now().UTC()
@@ -244,16 +242,15 @@ func TestResponderUsesConversationModelOverride(t *testing.T) {
 	prompt := "base prompt"
 	runner := &fakeRunner{}
 	responder := &Responder{
-		runner:                  runner,
-		store:                   store,
-		prompt:                  prompt,
-		promptHash:              PromptHash(prompt),
-		defaultWorkDir:          workDir,
-		defaultModel:            "gpt-5.3-codex",
-		defaultReasoningEffort:  "medium",
-		defaultReasoningOptions: defaultReasoningEffortOptions(),
-		maxTurns:                30,
-		sessionTTL:              time.Hour,
+		runner:                 runner,
+		store:                  store,
+		prompt:                 prompt,
+		promptHash:             PromptHash(prompt),
+		defaultWorkDir:         workDir,
+		defaultModel:           "gpt-5.3-codex",
+		defaultReasoningEffort: "medium",
+		maxTurns:               30,
+		sessionTTL:             time.Hour,
 	}
 
 	result, err := responder.SetModel("conv-model", "gpt-5.4")
@@ -288,16 +285,15 @@ func TestResponderResetPreservesModelOverride(t *testing.T) {
 	workDir := t.TempDir()
 	prompt := "base prompt"
 	responder := &Responder{
-		runner:                  &fakeRunner{},
-		store:                   store,
-		prompt:                  prompt,
-		promptHash:              PromptHash(prompt),
-		defaultWorkDir:          workDir,
-		defaultModel:            "gpt-5.3-codex",
-		defaultReasoningEffort:  "medium",
-		defaultReasoningOptions: defaultReasoningEffortOptions(),
-		maxTurns:                30,
-		sessionTTL:              time.Hour,
+		runner:                 &fakeRunner{},
+		store:                  store,
+		prompt:                 prompt,
+		promptHash:             PromptHash(prompt),
+		defaultWorkDir:         workDir,
+		defaultModel:           "gpt-5.3-codex",
+		defaultReasoningEffort: "medium",
+		maxTurns:               30,
+		sessionTTL:             time.Hour,
 	}
 
 	now := time.Now().UTC()
@@ -345,16 +341,15 @@ func TestResponderResumesWhenModelChanges(t *testing.T) {
 	prompt := "base prompt"
 	runner := &fakeRunner{}
 	responder := &Responder{
-		runner:                  runner,
-		store:                   store,
-		prompt:                  prompt,
-		promptHash:              PromptHash(prompt),
-		defaultWorkDir:          workDir,
-		defaultModel:            "gpt-5.3-codex",
-		defaultReasoningEffort:  "medium",
-		defaultReasoningOptions: defaultReasoningEffortOptions(),
-		maxTurns:                30,
-		sessionTTL:              time.Hour,
+		runner:                 runner,
+		store:                  store,
+		prompt:                 prompt,
+		promptHash:             PromptHash(prompt),
+		defaultWorkDir:         workDir,
+		defaultModel:           "gpt-5.3-codex",
+		defaultReasoningEffort: "medium",
+		maxTurns:               30,
+		sessionTTL:             time.Hour,
 	}
 
 	now := time.Now().UTC()
@@ -426,17 +421,16 @@ func TestResponderUsesModelSpecificReasoningDefaultsFromCache(t *testing.T) {
 	prompt := "base prompt"
 	runner := &fakeRunner{}
 	responder := &Responder{
-		runner:                  runner,
-		store:                   store,
-		prompt:                  prompt,
-		promptHash:              PromptHash(prompt),
-		defaultWorkDir:          workDir,
-		defaultModel:            "gpt-5.3-codex",
-		modelOptions:            &ModelOptionsSource{cachePath: cachePath},
-		defaultReasoningEffort:  "medium",
-		defaultReasoningOptions: defaultReasoningEffortOptions(),
-		maxTurns:                30,
-		sessionTTL:              time.Hour,
+		runner:                 runner,
+		store:                  store,
+		prompt:                 prompt,
+		promptHash:             PromptHash(prompt),
+		defaultWorkDir:         workDir,
+		defaultModel:           "gpt-5.3-codex",
+		modelOptions:           &ModelOptionsSource{cachePath: cachePath},
+		defaultReasoningEffort: "medium",
+		maxTurns:               30,
+		sessionTTL:             time.Hour,
 	}
 
 	if _, err := responder.SetModel("conv-cache-effort", "gpt-5.4"); err != nil {
@@ -450,13 +444,13 @@ func TestResponderUsesModelSpecificReasoningDefaultsFromCache(t *testing.T) {
 	if answer != "new answer" {
 		t.Fatalf("answer = %q, want %q", answer, "new answer")
 	}
-	if runner.lastNewEffort != "high" {
-		t.Fatalf("new effort = %q, want high", runner.lastNewEffort)
+	if runner.lastNewEffort != "medium" {
+		t.Fatalf("new effort = %q, want medium", runner.lastNewEffort)
 	}
 
 	state := responder.GetModelState("conv-cache-effort")
-	if state.DefaultReasoningEffort != "high" {
-		t.Fatalf("default reasoning effort = %q, want high", state.DefaultReasoningEffort)
+	if state.DefaultReasoningEffort != "medium" {
+		t.Fatalf("default reasoning effort = %q, want medium", state.DefaultReasoningEffort)
 	}
 	if len(state.ReasoningOptions) != 2 || state.ReasoningOptions[1].Effort != "high" {
 		t.Fatalf("unexpected reasoning options: %+v", state.ReasoningOptions)
@@ -488,7 +482,8 @@ func TestResponderSwitchingModelClearsUnsupportedReasoningOverride(t *testing.T)
       "priority": 1,
       "default_reasoning_level": "low",
       "supported_reasoning_levels": [
-        {"effort": "low"}
+        {"effort": "low"},
+        {"effort": "medium"}
       ]
     }
   ]
@@ -499,17 +494,16 @@ func TestResponderSwitchingModelClearsUnsupportedReasoningOverride(t *testing.T)
 	workDir := t.TempDir()
 	prompt := "base prompt"
 	responder := &Responder{
-		runner:                  &fakeRunner{},
-		store:                   store,
-		prompt:                  prompt,
-		promptHash:              PromptHash(prompt),
-		defaultWorkDir:          workDir,
-		defaultModel:            "gpt-5.3-codex",
-		modelOptions:            &ModelOptionsSource{cachePath: cachePath},
-		defaultReasoningEffort:  "medium",
-		defaultReasoningOptions: defaultReasoningEffortOptions(),
-		maxTurns:                30,
-		sessionTTL:              time.Hour,
+		runner:                 &fakeRunner{},
+		store:                  store,
+		prompt:                 prompt,
+		promptHash:             PromptHash(prompt),
+		defaultWorkDir:         workDir,
+		defaultModel:           "gpt-5.3-codex",
+		modelOptions:           &ModelOptionsSource{cachePath: cachePath},
+		defaultReasoningEffort: "medium",
+		maxTurns:               30,
+		sessionTTL:             time.Hour,
 	}
 
 	if _, err := responder.SetModel("conv-effort-reset", "gpt-5.4"); err != nil {
@@ -529,7 +523,7 @@ func TestResponderSwitchingModelClearsUnsupportedReasoningOverride(t *testing.T)
 	if result.State.OverrideReasoningEffort != "" {
 		t.Fatalf("reasoning override = %q, want empty", result.State.OverrideReasoningEffort)
 	}
-	if result.State.ReasoningEffort != "low" {
-		t.Fatalf("reasoning effort = %q, want low", result.State.ReasoningEffort)
+	if result.State.ReasoningEffort != "medium" {
+		t.Fatalf("reasoning effort = %q, want medium", result.State.ReasoningEffort)
 	}
 }

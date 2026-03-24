@@ -9,7 +9,6 @@ import (
 type ModelOption struct {
 	Slug                      string
 	Description               string
-	DefaultReasoningEffort    string
 	SupportedReasoningEfforts []ReasoningEffortOption
 }
 
@@ -107,7 +106,7 @@ func (r *Responder) SetReasoningEffort(conversationKey, effort string) (ModelCha
 	}
 
 	oldOverride := strings.TrimSpace(record.ReasoningEffortOverride)
-	record.ReasoningEffortOverride = r.normalizeReasoningEffortOverride(r.effectiveModel(record), effort)
+	record.ReasoningEffortOverride = r.normalizeReasoningEffortOverride(effort)
 	changed := oldOverride != record.ReasoningEffortOverride
 
 	if err := r.persistConversationRecord(conversationKey, record); err != nil {
@@ -229,7 +228,7 @@ func (r *Responder) modelStateForRecord(conversationKey string, record SessionRe
 		OverrideModel:           strings.TrimSpace(record.ModelOverride),
 		EffectiveModel:          effectiveModel,
 		ModelOptions:            options,
-		DefaultReasoningEffort:  r.defaultReasoningEffortForModel(effectiveModel),
+		DefaultReasoningEffort:  r.defaultReasoningEffort,
 		OverrideReasoningEffort: reasoningOverride,
 		ReasoningEffort:         r.effectiveReasoningEffort(record),
 		ReasoningOptions:        r.reasoningOptionsForModel(currentModelOption),
@@ -255,12 +254,12 @@ func (r *Responder) effectiveReasoningEffort(record SessionRecord) string {
 	if override := r.reasoningEffortOverrideForModel(record); override != "" {
 		return override
 	}
-	return r.defaultReasoningEffortForModel(r.effectiveModel(record))
+	return r.defaultReasoningEffort
 }
 
-func (r *Responder) normalizeReasoningEffortOverride(model, effort string) string {
+func (r *Responder) normalizeReasoningEffortOverride(effort string) string {
 	effort = strings.TrimSpace(strings.ToLower(effort))
-	if effort == "" || effort == r.defaultReasoningEffortForModel(model) {
+	if effort == "" || effort == r.defaultReasoningEffort {
 		return ""
 	}
 	return effort
@@ -275,7 +274,7 @@ func (r *Responder) reasoningEffortOverrideForModel(record SessionRecord) string
 	if err := r.validateReasoningEffortForModel(model, override); err != nil {
 		return ""
 	}
-	return r.normalizeReasoningEffortOverride(model, override)
+	return r.normalizeReasoningEffortOverride(override)
 }
 
 func (r *Responder) normalizeRecordReasoningEffortOverride(record *SessionRecord) {

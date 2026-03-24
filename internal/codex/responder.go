@@ -18,18 +18,17 @@ type runnerClient interface {
 }
 
 type Responder struct {
-	runner                  runnerClient
-	store                   *FileSessionStore
-	prompt                  string
-	promptHash              string
-	defaultWorkDir          string
-	defaultModel            string
-	modelOptions            *ModelOptionsSource
-	defaultReasoningEffort  string
-	defaultReasoningOptions []ReasoningEffortOption
-	maxTurns                int
-	sessionTTL              time.Duration
-	timeout                 time.Duration
+	runner                 runnerClient
+	store                  *FileSessionStore
+	prompt                 string
+	promptHash             string
+	defaultWorkDir         string
+	defaultModel           string
+	modelOptions           *ModelOptionsSource
+	defaultReasoningEffort string
+	maxTurns               int
+	sessionTTL             time.Duration
+	timeout                time.Duration
 }
 
 func NewResponder(cfg *config.Config) (*Responder, error) {
@@ -50,17 +49,16 @@ func NewResponder(cfg *config.Config) (*Responder, error) {
 			DefaultReasoningEffort: cfg.CodexReasoningEffort,
 			Sandbox:                cfg.CodexSandbox,
 		},
-		store:                   store,
-		prompt:                  prompt,
-		promptHash:              PromptHash(prompt),
-		defaultWorkDir:          cfg.ProjectRoot,
-		defaultModel:            strings.TrimSpace(cfg.CodexModel),
-		modelOptions:            NewModelOptionsSource([]string{cfg.CodexModel}),
-		defaultReasoningEffort:  strings.TrimSpace(strings.ToLower(cfg.CodexReasoningEffort)),
-		defaultReasoningOptions: defaultReasoningEffortOptions(),
-		maxTurns:                cfg.CodexMaxTurns,
-		sessionTTL:              time.Duration(cfg.CodexSessionTTLHours) * time.Hour,
-		timeout:                 time.Duration(cfg.CodexTimeoutSec) * time.Second,
+		store:                  store,
+		prompt:                 prompt,
+		promptHash:             PromptHash(prompt),
+		defaultWorkDir:         cfg.ProjectRoot,
+		defaultModel:           strings.TrimSpace(cfg.CodexModel),
+		modelOptions:           NewModelOptionsSource([]string{cfg.CodexModel}),
+		defaultReasoningEffort: strings.TrimSpace(strings.ToLower(cfg.CodexReasoningEffort)),
+		maxTurns:               cfg.CodexMaxTurns,
+		sessionTTL:             time.Duration(cfg.CodexSessionTTLHours) * time.Hour,
+		timeout:                time.Duration(cfg.CodexTimeoutSec) * time.Second,
 	}, nil
 }
 
@@ -235,29 +233,12 @@ func (r *Responder) reasoningOptionsForModel(option *ModelOption) []ReasoningEff
 	return nil
 }
 
-func (r *Responder) validationReasoningOptionsForModel(option *ModelOption) []ReasoningEffortOption {
-	if options := r.reasoningOptionsForModel(option); len(options) > 0 {
-		return options
-	}
-	return cloneReasoningEffortOptions(r.defaultReasoningOptions)
-}
-
-func (r *Responder) defaultReasoningEffortForModel(model string) string {
-	model = strings.TrimSpace(model)
-	if option := findModelOption(r.availableModelOptions(), model); option != nil {
-		if effort := strings.TrimSpace(strings.ToLower(option.DefaultReasoningEffort)); effort != "" {
-			return effort
-		}
-	}
-	return strings.TrimSpace(strings.ToLower(r.defaultReasoningEffort))
-}
-
 func (r *Responder) validateReasoningEffortForModel(model, effort string) error {
 	effort = strings.TrimSpace(strings.ToLower(effort))
 	if effort == "" {
 		return fmt.Errorf("reasoning effort is empty")
 	}
-	options := r.validationReasoningOptionsForModel(findModelOption(r.availableModelOptions(), model))
+	options := r.reasoningOptionsForModel(findModelOption(r.availableModelOptions(), model))
 	if len(options) == 0 {
 		return nil
 	}
@@ -267,15 +248,6 @@ func (r *Responder) validateReasoningEffortForModel(model, effort string) error 
 		}
 	}
 	return fmt.Errorf("unsupported reasoning effort: %s (choose one of: %s)", effort, joinReasoningEffortLabels(options))
-}
-
-func defaultReasoningEffortOptions() []ReasoningEffortOption {
-	return []ReasoningEffortOption{
-		{Effort: "low"},
-		{Effort: "medium"},
-		{Effort: "high"},
-		{Effort: "xhigh"},
-	}
 }
 
 func cloneReasoningEffortOptions(options []ReasoningEffortOption) []ReasoningEffortOption {

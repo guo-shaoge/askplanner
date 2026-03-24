@@ -58,7 +58,6 @@ func parseModelOptionsFromCache(data []byte) ([]ModelOption, error) {
 			Description              string `json:"description"`
 			Visibility               string `json:"visibility"`
 			Priority                 int    `json:"priority"`
-			DefaultReasoningLevel    string `json:"default_reasoning_level"`
 			SupportedReasoningLevels []struct {
 				Effort      string `json:"effort"`
 				Description string `json:"description"`
@@ -92,7 +91,6 @@ func parseModelOptionsFromCache(data []byte) ([]ModelOption, error) {
 			option: ModelOption{
 				Slug:                      slug,
 				Description:               strings.TrimSpace(model.Description),
-				DefaultReasoningEffort:    strings.TrimSpace(strings.ToLower(model.DefaultReasoningLevel)),
 				SupportedReasoningEfforts: newReasoningEffortOptions(model.SupportedReasoningLevels),
 			},
 			priority: model.Priority,
