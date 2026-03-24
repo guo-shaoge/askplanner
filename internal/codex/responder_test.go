@@ -178,3 +178,13 @@ func TestResponderSkipsThreadLoaderOnSuccessfulResume(t *testing.T) {
 		t.Fatalf("thread loader calls = %d, want 0", loads)
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestAppendAnswerWarning(t *testing.T) {
+	got := appendAnswerWarning("final answer", "session history was not saved")
+	if !strings.Contains(got, "final answer") || !strings.Contains(got, "Warning: session history was not saved") {
+		t.Fatalf("appendAnswerWarning() = %q", got)
+	}
+}
+>>>>>>> 72d3b4494b14c38d3696ac4c22e42ec9b798e508

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lab/askplanner/internal/config"
+	"lab/askplanner/internal/usererr"
 )
 
 type runnerClient interface {
@@ -84,7 +85,8 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 			record.LastError = ""
 			record.appendTurn(question, result.Answer)
 			if err := r.store.Put(record); err != nil {
-				return "", err
+				log.Printf("[codex] persist session after resume failed for %s: %v", conversationKey, err)
+				return appendAnswerWarning(result.Answer, buildSessionStoreWarning("Agent answered this turn, but couldn't save the local session history. Follow-up turns may start a new session.", err)), nil
 			}
 			log.Printf("[codex] answer done conversation=%s mode=resume elapsed=%s", conversationKey, time.Since(start))
 			return result.Answer, nil
@@ -105,7 +107,7 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 		return "", err
 	}
 	if strings.TrimSpace(result.SessionID) == "" {
-		return "", fmt.Errorf("codex did not return a session id")
+		return "", usererr.New(usererr.KindUnavailable, "Codex did not return a session ID. Please retry.")
 	}
 
 	record = SessionRecord{
@@ -124,7 +126,8 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 		}},
 	}
 	if err := r.store.Put(record); err != nil {
-		return "", err
+		log.Printf("[codex] persist new session failed for %s: %v", conversationKey, err)
+		return appendAnswerWarning(result.Answer, buildSessionStoreWarning("Agent answered this turn, but couldn't save the local session history. Follow-up turns may start a new session.", err)), nil
 	}
 	log.Printf("[codex] answer done conversation=%s mode=new session=%s elapsed=%s",
 		conversationKey, result.SessionID, time.Since(start))
@@ -132,7 +135,10 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 }
 
 func (r *Responder) Reset(conversationKey string) error {
-	return r.store.Delete(conversationKey)
+	if err := r.store.Delete(conversationKey); err != nil {
+		return usererr.WrapLocalStorage("Agent couldn't reset the local session history. Please retry.", err)
+	}
+	return nil
 }
 
 func (r *Responder) ResetByWorkDirPrefix(workDirPrefix string) (int, error) {
@@ -227,4 +233,20 @@ func compactText(s string, max int) string {
 		return s
 	}
 	return string(runes[:max]) + "..."
+}
+
+func appendAnswerWarning(answer, warning string) string {
+	answer = strings.TrimSpace(answer)
+	warning = strings.TrimSpace(warning)
+	if warning == "" {
+		return answer
+	}
+	if answer == "" {
+		return "Warning: " + warning
+	}
+	return answer + "\n\nWarning: " + warning
+}
+
+func buildSessionStoreWarning(message string, err error) string {
+	return usererr.OrDefault(usererr.WrapLocalStorage(message, err), message)
 }

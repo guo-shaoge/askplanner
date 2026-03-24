@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"lab/askplanner/internal/usererr"
 )
 
 type Runner struct {
@@ -113,22 +116,13 @@ func (r *Runner) run(ctx context.Context, workDir string, optionArgs, positional
 			return result, nil
 		}
 		log.Printf("[codex] error: %v\nstderr: %s", runErr, strings.TrimSpace(stderr.String()))
-		return nil, fmt.Errorf("run %s %s: %w\nstderr:\n%s\nstdout:\n%s",
-			r.Bin,
-			strings.Join(args[:len(args)-1], " "),
-			runErr,
-			strings.TrimSpace(stderr.String()),
-			strings.TrimSpace(stdout.String()),
-		)
+		return nil, classifyRunError(ctx, runErr, stderr.String(), stdout.String())
 	}
 
 	result.Answer = strings.TrimSpace(result.Answer)
 	if result.Answer == "" {
 		log.Printf("[codex] error: empty answer\nstderr: %s", strings.TrimSpace(stderr.String()))
-		return nil, fmt.Errorf("codex returned empty answer\nstderr:\n%s\nstdout:\n%s",
-			strings.TrimSpace(stderr.String()),
-			strings.TrimSpace(stdout.String()),
-		)
+		return nil, usererr.New(usererr.KindUnavailable, "Codex did not return a usable answer. Please retry.")
 	}
 
 	log.Printf("[codex] success (session=%s, answer_len=%d, elapsed=%s)", result.SessionID, len(result.Answer), time.Since(start))
@@ -197,6 +191,44 @@ func extractFinalAnswer(stdout string) string {
 		}
 	}
 	return ""
+}
+
+func classifyRunError(ctx context.Context, runErr error, stderr, stdout string) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(runErr, context.DeadlineExceeded) {
+		return usererr.Wrap(usererr.KindTimeout, "The request timed out while waiting for Codex. Please retry.", runErr)
+	}
+	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(runErr, context.Canceled) {
+		return usererr.Wrap(usererr.KindUnavailable, "The request was canceled before Codex finished.", runErr)
+	}
+
+	lower := strings.ToLower(strings.Join([]string{
+		runErr.Error(),
+		stderr,
+		stdout,
+	}, "\n"))
+
+	if errors.Is(runErr, exec.ErrNotFound) || strings.Contains(lower, "executable file not found") {
+		return usererr.Wrap(usererr.KindConfig, "Codex CLI is not available on this host. Check `CODEX_BIN` and the Codex installation.", runErr)
+	}
+	switch {
+	case containsAny(lower, "rate limit", "too many requests", "429"):
+		return usererr.Wrap(usererr.KindRateLimit, "Codex is rate-limited right now. Please retry in a moment.", runErr)
+	case containsAny(lower, "deadline exceeded", "timed out", "i/o timeout", "timeout"):
+		return usererr.Wrap(usererr.KindTimeout, "The request timed out while waiting for Codex. Please retry.", runErr)
+	case containsAny(lower, "connection refused", "connection reset", "network is unreachable", "no such host", "temporary failure in name resolution", "tls handshake timeout", "dial tcp"):
+		return usererr.Wrap(usererr.KindNetwork, "Codex could not be reached because of a network problem. Please retry.", runErr)
+	default:
+		return usererr.Wrap(usererr.KindUnavailable, "Codex execution failed. Please retry. If it keeps failing, check the relay logs.", runErr)
+	}
+}
+
+func containsAny(s string, parts ...string) bool {
+	for _, part := range parts {
+		if strings.Contains(s, part) {
+			return true
+		}
+	}
+	return false
 }
 
 func DefaultSessionStorePath(projectRoot string) string {

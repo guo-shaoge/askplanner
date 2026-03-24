@@ -63,6 +63,7 @@ type uploadCommand struct {
 	// empty we only save files and reply with the import summary.
 	count     int
 	remainder string
+	matched   bool
 	ok        bool
 }
 
@@ -83,8 +84,9 @@ type downloadedResource struct {
 }
 
 type replyBody struct {
-	msgType string
-	content string
+	msgType      string
+	content      string
+	fallbackText string
 }
 
 type postMessageContent struct {

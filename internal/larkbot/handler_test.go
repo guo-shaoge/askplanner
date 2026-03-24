@@ -6,6 +6,7 @@ import (
 
 	"lab/askplanner/internal/clinic"
 	"lab/askplanner/internal/codex"
+	"lab/askplanner/internal/usererr"
 	"lab/askplanner/internal/workspace"
 )
 
@@ -227,9 +228,7 @@ func TestHandlePreparedReplyReturnsUserFacingClinicErrorWithUploadPrefix(t *test
 	workspaceSvc := &fakeWorkspaceService{ensureWS: newWorkspaceFixture()}
 	responder := &fakeResponder{answer: "should not be used"}
 	prefetcher := &fakePrefetcher{
-		err: &clinic.UserError{
-			Message: "clinic failed",
-		},
+		err: usererr.New(usererr.KindUnavailable, "clinic failed"),
 	}
 
 	prepared := &preparedReply{
@@ -281,9 +280,7 @@ func TestHandlePreparedReplyRunsWorkspaceSwitchQuestionWithUserFacingError(t *te
 	ws := newWorkspaceFixture()
 	responder := &fakeResponder{answer: "should not be used"}
 	prefetcher := &fakePrefetcher{
-		err: &clinic.UserError{
-			Message: "clinic failed",
-		},
+		err: usererr.New(usererr.KindUnavailable, "clinic failed"),
 	}
 	workspaceSvc := &fakeWorkspaceService{switchWS: ws}
 
