@@ -11,6 +11,7 @@ import (
 
 	"lab/askplanner/internal/clinic"
 	"lab/askplanner/internal/codex"
+	"lab/askplanner/internal/usage"
 	"lab/askplanner/internal/workspace"
 )
 
@@ -42,7 +43,7 @@ func (a *App) answerEvent(ctx context.Context, event *larkim.P2MessageReceiveV1)
 	if err != nil {
 		return "", err
 	}
-	answer, err := handlePreparedReply(ctx, a.responder, a.prefetcher, a.workspace, prepared)
+	answer, err := handlePreparedReply(ctx, a.responder, a.prefetcher, a.workspace, a.tracker, prepared)
 	if err != nil {
 		return "", err
 	}
@@ -54,22 +55,22 @@ func (a *App) answerEvent(ctx context.Context, event *larkim.P2MessageReceiveV1)
 // handlePreparedReply is the shared execution path after message parsing.
 // Normal questions, /upload_N follow-up questions, and /ws ... -- question all
 // flow through here so behavior stays aligned as the bot grows.
-func handlePreparedReply(ctx context.Context, responder responderClient, prefetcher prefetcherService, workspaceManager workspaceService, prepared *preparedReply) (string, error) {
+func handlePreparedReply(ctx context.Context, responder responderClient, prefetcher prefetcherService, workspaceManager workspaceService, tracker *usage.QuestionTracker, prepared *preparedReply) (string, error) {
 	if prepared.skipCodex {
 		return prepared.directReply, nil
 	}
 	if prepared.modelCmd != nil {
-		return runModelCommand(ctx, workspaceManager, responder, prefetcher, prepared)
+		return runModelCommand(ctx, workspaceManager, responder, prefetcher, tracker, prepared)
 	}
 	if prepared.workspaceCmd != nil {
-		return runWorkspaceCommand(ctx, workspaceManager, responder, prefetcher, prepared)
+		return runWorkspaceCommand(ctx, workspaceManager, responder, prefetcher, tracker, prepared)
 	}
 
 	ws, err := workspaceManager.Ensure(ctx, prepared.userKey)
 	if err != nil {
 		return "", err
 	}
-	answer, err := answerPreparedQuestion(ctx, responder, prefetcher, prepared, ws)
+	answer, err := answerPreparedQuestion(ctx, responder, prefetcher, tracker, prepared, ws)
 	if err != nil {
 		return "", err
 	}
@@ -79,7 +80,7 @@ func handlePreparedReply(ctx context.Context, responder responderClient, prefetc
 	return answer, nil
 }
 
-func runModelCommand(ctx context.Context, workspaceManager workspaceService, responder responderClient, prefetcher prefetcherService, prepared *preparedReply) (string, error) {
+func runModelCommand(ctx context.Context, workspaceManager workspaceService, responder responderClient, prefetcher prefetcherService, tracker *usage.QuestionTracker, prepared *preparedReply) (string, error) {
 	status := ""
 	switch prepared.modelCmd.Action {
 	case "status":
@@ -136,7 +137,7 @@ func runModelCommand(ctx context.Context, workspaceManager workspaceService, res
 	if err != nil {
 		return "", err
 	}
-	answer, err := answerPreparedQuestion(ctx, responder, prefetcher, prepared, ws)
+	answer, err := answerPreparedQuestion(ctx, responder, prefetcher, tracker, prepared, ws)
 	if err != nil {
 		return "", err
 	}
@@ -146,7 +147,7 @@ func runModelCommand(ctx context.Context, workspaceManager workspaceService, res
 // runWorkspaceCommand keeps the user-facing status output coupled to the
 // underlying workspace mutation, then optionally re-enters the normal answer
 // pipeline with the updated workspace bound into runtime context.
-func runWorkspaceCommand(ctx context.Context, manager workspaceService, responder responderClient, prefetcher prefetcherService, prepared *preparedReply) (string, error) {
+func runWorkspaceCommand(ctx context.Context, manager workspaceService, responder responderClient, prefetcher prefetcherService, tracker *usage.QuestionTracker, prepared *preparedReply) (string, error) {
 	start := time.Now()
 	var (
 		ws                 *workspace.Workspace
@@ -185,7 +186,7 @@ func runWorkspaceCommand(ctx context.Context, manager workspaceService, responde
 		return status, nil
 	}
 
-	answer, err := answerPreparedQuestion(ctx, responder, prefetcher, prepared, ws)
+	answer, err := answerPreparedQuestion(ctx, responder, prefetcher, tracker, prepared, ws)
 	if err != nil {
 		return "", err
 	}
@@ -197,12 +198,13 @@ func runWorkspaceCommand(ctx context.Context, manager workspaceService, responde
 // answerPreparedQuestion owns the "question -> enrich runtime -> short-circuit
 // intro reply -> Codex answer" sequence used by both regular and workspace
 // flows. Keeping it centralized avoids subtle behavior drift.
-func answerPreparedQuestion(ctx context.Context, responder responderClient, prefetcher prefetcherService, prepared *preparedReply, ws *workspace.Workspace) (string, error) {
+func answerPreparedQuestion(ctx context.Context, responder responderClient, prefetcher prefetcherService, tracker *usage.QuestionTracker, prepared *preparedReply, ws *workspace.Workspace) (string, error) {
 	question := strings.TrimSpace(prepared.question)
 	if question == "" {
 		question = "Please introduce your capabilities."
 	}
 	log.Printf("[larkbot] answering question: %q (conversation=%s)", question, prepared.conversationKey)
+	span := tracker.Begin("lark", prepared.userKey, prepared.conversationKey, question, responder.GetModelState(prepared.conversationKey).EffectiveModel, workspaceEnvHash(ws))
 
 	baseRuntime := workspace.BindRuntimeContext(codex.RuntimeContext{
 		Attachment:   prepared.attachmentCtx,
@@ -215,7 +217,13 @@ func answerPreparedQuestion(ctx context.Context, responder responderClient, pref
 		if msg := clinic.UserFacingMessage(err); msg != "" {
 			log.Printf("[larkbot] clinic prefetch user-visible error: %v (conversation=%s)",
 				err, prepared.conversationKey)
+			if span != nil {
+				span.ShortCircuit()
+			}
 			return msg, nil
+		}
+		if span != nil {
+			span.Error(err)
 		}
 		return "", err
 	}
@@ -231,16 +239,32 @@ func answerPreparedQuestion(ctx context.Context, responder responderClient, pref
 		enriched.RuntimeContext.UserKey = prepared.userKey
 	}
 	if strings.TrimSpace(enriched.IntroReply) != "" {
+		if span != nil {
+			span.ShortCircuit()
+		}
 		return joinReplySections(enriched.IntroReply, formatWarning(enriched.Warning)), nil
 	}
 	answer, err := responder.AnswerWithContext(ctx, prepared.conversationKey, question, enriched.RuntimeContext)
 	if err != nil {
+		if span != nil {
+			span.Error(err)
+		}
 		return "", err
+	}
+	if span != nil {
+		span.Success()
 	}
 	if strings.TrimSpace(enriched.Warning) != "" {
 		answer = joinReplySections(formatWarning(enriched.Warning), answer)
 	}
 	return answer, nil
+}
+
+func workspaceEnvHash(ws *workspace.Workspace) string {
+	if ws == nil {
+		return ""
+	}
+	return strings.TrimSpace(ws.EnvironmentHash)
 }
 
 func buildWorkspaceChangeNotice(cmd *workspace.Command) string {

@@ -55,7 +55,9 @@ func (f *fakeResponder) AnswerWithContext(ctx context.Context, conversationKey, 
 func (f *fakeResponder) GetModelState(conversationKey string) codex.ModelState {
 	f.modelCalls++
 	f.lastConversation = conversationKey
-	f.lastModelAction = "status"
+	if f.lastModelAction == "" {
+		f.lastModelAction = "status"
+	}
 	return f.modelState
 }
 
@@ -203,7 +205,7 @@ func TestHandlePreparedReplyPrefixesAnswerForStandardQuestion(t *testing.T) {
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -250,7 +252,7 @@ func TestHandlePreparedReplyUsesIntroReplyWithoutCallingResponder(t *testing.T) 
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -279,7 +281,7 @@ func TestHandlePreparedReplyPassesThreadContextLoaderToResponder(t *testing.T) {
 		},
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -321,7 +323,7 @@ func TestHandlePreparedReplyReturnsUserFacingClinicErrorWithUploadPrefix(t *test
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -346,7 +348,7 @@ func TestHandlePreparedReplyRunsWorkspaceStatusQuestion(t *testing.T) {
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -374,7 +376,7 @@ func TestHandlePreparedReplyRunsWorkspaceSwitchQuestionWithUserFacingError(t *te
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -409,7 +411,7 @@ func TestHandlePreparedReplyMarksOtherConversationsAfterWorkspaceChange(t *testi
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -444,7 +446,7 @@ func TestHandlePreparedReplyIgnoresWorkspaceMarkFailure(t *testing.T) {
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -473,7 +475,7 @@ func TestHandlePreparedReplyReturnsModelStatus(t *testing.T) {
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, &fakePrefetcher{}, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, &fakePrefetcher{}, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -514,7 +516,7 @@ func TestHandlePreparedReplySetsModelThenAnswersQuestion(t *testing.T) {
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -558,7 +560,7 @@ func TestHandlePreparedReplySetsReasoningEffortThenAnswersQuestion(t *testing.T)
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}

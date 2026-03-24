@@ -17,6 +17,7 @@ import (
 	"lab/askplanner/internal/config"
 	"lab/askplanner/internal/modelcmd"
 	"lab/askplanner/internal/selfcmd"
+	"lab/askplanner/internal/usage"
 	"lab/askplanner/internal/usererr"
 	"lab/askplanner/internal/workspace"
 )
@@ -50,6 +51,10 @@ func main() {
 	workspaceManager, err := workspace.NewManager(cfg)
 	if err != nil {
 		fatalStartup("build workspace manager", err, "Check workspace-related storage paths and make sure they are writable.")
+	}
+	tracker, err := usage.NewQuestionTracker(cfg)
+	if err != nil {
+		log.Printf("[askplanner] usage tracker disabled: %v", err)
 	}
 
 	fmt.Printf("askplanner v2 (backend: codex-cli, model: %s)\n", cfg.CodexModel)
@@ -111,7 +116,7 @@ func main() {
 				fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
 			}
-			answer, err := runModelCommand(ctx, workspaceManager, responder, prefetcher, conversationKey, clinicUserKey, cmd)
+			answer, err := runModelCommand(ctx, workspaceManager, responder, prefetcher, tracker, conversationKey, clinicUserKey, cmd)
 			if err != nil {
 				fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
@@ -126,7 +131,7 @@ func main() {
 				fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
 			}
-			answer, err := runWorkspaceCommand(ctx, workspaceManager, responder, prefetcher, conversationKey, clinicUserKey, cmd)
+			answer, err := runWorkspaceCommand(ctx, workspaceManager, responder, prefetcher, tracker, conversationKey, clinicUserKey, cmd)
 			if err != nil {
 				fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 				continue
@@ -147,8 +152,14 @@ func main() {
 		if err != nil {
 			if msg := clinic.UserFacingMessage(err); msg != "" {
 				log.Printf("[askplanner] clinic prefetch user-visible error: %v", err)
+				if span := tracker.Begin("cli", clinicUserKey, conversationKey, question, responder.GetModelState(conversationKey).EffectiveModel, ws.EnvironmentHash); span != nil {
+					span.ShortCircuit()
+				}
 				fmt.Printf("%s\n\n", msg)
 				continue
+			}
+			if span := tracker.Begin("cli", clinicUserKey, conversationKey, question, responder.GetModelState(conversationKey).EffectiveModel, ws.EnvironmentHash); span != nil {
+				span.Error(err)
 			}
 			fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 			continue
@@ -156,15 +167,25 @@ func main() {
 		enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
 		enriched.RuntimeContext.UserKey = clinicUserKey
 		if strings.TrimSpace(enriched.IntroReply) != "" {
+			if span := tracker.Begin("cli", clinicUserKey, conversationKey, question, responder.GetModelState(conversationKey).EffectiveModel, ws.EnvironmentHash); span != nil {
+				span.ShortCircuit()
+			}
 			fmt.Println(joinReplySections(enriched.IntroReply, formatWarning(enriched.Warning)))
 			fmt.Println()
 			continue
 		}
 
+		span := tracker.Begin("cli", clinicUserKey, conversationKey, question, responder.GetModelState(conversationKey).EffectiveModel, ws.EnvironmentHash)
 		answer, err := responder.AnswerWithContext(ctx, conversationKey, question, enriched.RuntimeContext)
 		if err != nil {
+			if span != nil {
+				span.Error(err)
+			}
 			fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 			continue
+		}
+		if span != nil {
+			span.Success()
 		}
 		if strings.TrimSpace(enriched.Warning) != "" {
 			answer = joinReplySections(formatWarning(enriched.Warning), answer)
@@ -177,7 +198,7 @@ func main() {
 	}
 }
 
-func runModelCommand(ctx context.Context, workspaceManager *workspace.Manager, responder *codex.Responder, prefetcher *clinic.Prefetcher, conversationKey, userKey string, cmd *modelcmd.Command) (string, error) {
+func runModelCommand(ctx context.Context, workspaceManager *workspace.Manager, responder *codex.Responder, prefetcher *clinic.Prefetcher, tracker *usage.QuestionTracker, conversationKey, userKey string, cmd *modelcmd.Command) (string, error) {
 	status := ""
 	switch cmd.Action {
 	case "status":
@@ -237,17 +258,33 @@ func runModelCommand(ctx context.Context, workspaceManager *workspace.Manager, r
 	enriched, err := prefetcher.Enrich(ctx, userKey, cmd.Question, workspace.BindRuntimeContext(codex.RuntimeContext{}, ws))
 	if err != nil {
 		if msg := clinic.UserFacingMessage(err); msg != "" {
+			if span := tracker.Begin("cli", userKey, conversationKey, cmd.Question, responder.GetModelState(conversationKey).EffectiveModel, ws.EnvironmentHash); span != nil {
+				span.ShortCircuit()
+			}
 			return joinReplySections(status, msg), nil
+		}
+		if span := tracker.Begin("cli", userKey, conversationKey, cmd.Question, responder.GetModelState(conversationKey).EffectiveModel, ws.EnvironmentHash); span != nil {
+			span.Error(err)
 		}
 		return "", err
 	}
 	enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
 	if strings.TrimSpace(enriched.IntroReply) != "" {
+		if span := tracker.Begin("cli", userKey, conversationKey, cmd.Question, responder.GetModelState(conversationKey).EffectiveModel, ws.EnvironmentHash); span != nil {
+			span.ShortCircuit()
+		}
 		return joinReplySections(status, enriched.IntroReply, formatWarning(enriched.Warning)), nil
 	}
+	span := tracker.Begin("cli", userKey, conversationKey, cmd.Question, responder.GetModelState(conversationKey).EffectiveModel, ws.EnvironmentHash)
 	answer, err := responder.AnswerWithContext(ctx, conversationKey, cmd.Question, enriched.RuntimeContext)
 	if err != nil {
+		if span != nil {
+			span.Error(err)
+		}
 		return "", err
+	}
+	if span != nil {
+		span.Success()
 	}
 	if strings.TrimSpace(enriched.Warning) != "" {
 		answer = joinReplySections(formatWarning(enriched.Warning), answer)
@@ -255,7 +292,7 @@ func runModelCommand(ctx context.Context, workspaceManager *workspace.Manager, r
 	return joinReplySections(status, answer), nil
 }
 
-func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, responder *codex.Responder, prefetcher *clinic.Prefetcher, conversationKey, userKey string, cmd *workspace.Command) (string, error) {
+func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, responder *codex.Responder, prefetcher *clinic.Prefetcher, tracker *usage.QuestionTracker, conversationKey, userKey string, cmd *workspace.Command) (string, error) {
 	start := time.Now()
 	var (
 		ws                 *workspace.Workspace
@@ -295,18 +332,34 @@ func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, respon
 	enriched, err := prefetcher.Enrich(ctx, userKey, cmd.Question, workspace.BindRuntimeContext(codex.RuntimeContext{UserKey: userKey}, ws))
 	if err != nil {
 		if msg := clinic.UserFacingMessage(err); msg != "" {
+			if span := tracker.Begin("cli", userKey, conversationKey, cmd.Question, responder.GetModelState(conversationKey).EffectiveModel, ws.EnvironmentHash); span != nil {
+				span.ShortCircuit()
+			}
 			return joinReplySections(status, msg), nil
+		}
+		if span := tracker.Begin("cli", userKey, conversationKey, cmd.Question, responder.GetModelState(conversationKey).EffectiveModel, ws.EnvironmentHash); span != nil {
+			span.Error(err)
 		}
 		return "", err
 	}
 	enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
 	enriched.RuntimeContext.UserKey = userKey
 	if strings.TrimSpace(enriched.IntroReply) != "" {
+		if span := tracker.Begin("cli", userKey, conversationKey, cmd.Question, responder.GetModelState(conversationKey).EffectiveModel, ws.EnvironmentHash); span != nil {
+			span.ShortCircuit()
+		}
 		return joinReplySections(status, enriched.IntroReply, formatWarning(enriched.Warning)), nil
 	}
+	span := tracker.Begin("cli", userKey, conversationKey, cmd.Question, responder.GetModelState(conversationKey).EffectiveModel, ws.EnvironmentHash)
 	answer, err := responder.AnswerWithContext(ctx, conversationKey, cmd.Question, enriched.RuntimeContext)
 	if err != nil {
+		if span != nil {
+			span.Error(err)
+		}
 		return "", err
+	}
+	if span != nil {
+		span.Success()
 	}
 	if strings.TrimSpace(enriched.Warning) != "" {
 		answer = joinReplySections(formatWarning(enriched.Warning), answer)
