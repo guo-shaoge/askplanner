@@ -207,7 +207,7 @@ go build -o bin/printprompt ./cmd/printprompt
 go test ./...
 ```
 ## Roadmap
-### user pesepctive
+### user perspective
 - [x] fix the larkbot message resent problem
 - [x] support process image
 - [x] support process plan replayer(unzip replayer and start diagnose automatically)
@@ -215,14 +215,15 @@ go test ./...
 - [x] support Feishu rich-text (`post`) plan questions and quote-style refs ([#12](https://github.com/guo-shaoge/askplanner/issues/12))
 - [x] output a markdown file if output too long
 - [x] error handling: make sure all errors should return to user clearly(like network issue, rate limte ect) (https://github.com/guo-shaoge/askplanner/pull/17)
-- [ ] support process clinic in batch mode
 - [x] support switch to different release version of tidb repo and tidb-docs repo (https://github.com/guo-shaoge/askplanner/commit/4e11ec3ac9f319d5bec545eeb0d159a452bf7d56)
+- [ ] support process clinic in batch mode
 - [ ] support context management
 - [ ] support model management
 - [ ] slow query finder
 - [ ] optimize the response time, especially the first user input request
+- [ ] add a watchdog/daemon to keep the askplanner background process alive
 
-### implementation pespective
+### implementation perspective
 - [ ] rotate log to avoid getting log too large
 - [ ] optimize the write process of session store
 - [ ] security related: better put agent in docker
