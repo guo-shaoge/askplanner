@@ -274,9 +274,9 @@ func appendAnswerWarning(answer, warning string) string {
 		return answer
 	}
 	if answer == "" {
-		return "Warning: " + warning
+		return formatAnswerWarning(warning)
 	}
-	return answer + "\n\nWarning: " + warning
+	return answer + "\n\n" + formatAnswerWarning(warning)
 }
 
 func prependAnswerWarning(answer, warning string) string {
@@ -286,9 +286,9 @@ func prependAnswerWarning(answer, warning string) string {
 		return answer
 	}
 	if answer == "" {
-		return "Warning: " + warning
+		return formatAnswerWarning(warning)
 	}
-	return "Warning: " + warning + "\n\n" + answer
+	return formatAnswerWarning(warning) + "\n\n" + answer
 }
 
 func buildSessionStoreWarning(message string, err error) string {
@@ -323,4 +323,12 @@ func parseConversationUserKey(conversationKey string) string {
 		return ""
 	}
 	return strings.TrimSpace(conversationKey[idx+len(marker):])
+}
+
+func formatAnswerWarning(warning string) string {
+	warning = strings.TrimSpace(warning)
+	if warning == "" {
+		return ""
+	}
+	return "**Warning**\n" + warning
 }

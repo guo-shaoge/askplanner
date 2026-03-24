@@ -181,7 +181,7 @@ func TestResponderSkipsThreadLoaderOnSuccessfulResume(t *testing.T) {
 
 func TestAppendAnswerWarning(t *testing.T) {
 	got := appendAnswerWarning("final answer", "session history was not saved")
-	if !strings.Contains(got, "final answer") || !strings.Contains(got, "Warning: session history was not saved") {
+	if !strings.Contains(got, "final answer") || !strings.Contains(got, "**Warning**\nsession history was not saved") {
 		t.Fatalf("appendAnswerWarning() = %q", got)
 	}
 }
@@ -277,7 +277,7 @@ func TestResponderShowsPendingWorkspaceNoticeOnEnvironmentChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AnswerWithContext returned error: %v", err)
 	}
-	if !strings.HasPrefix(answer, "Warning: workspace changed") {
+	if !strings.HasPrefix(answer, "**Warning**\nworkspace changed") {
 		t.Fatalf("answer = %q, want prefixed warning", answer)
 	}
 	record, _ = store.Get("conv-env")

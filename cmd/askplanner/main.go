@@ -258,7 +258,7 @@ func formatWarning(message string) string {
 	if message == "" {
 		return ""
 	}
-	return "Warning: " + message
+	return "**Warning**\n" + message
 }
 
 func buildCLIWorkspaceChangeNotice(cmd *workspace.Command) string {
