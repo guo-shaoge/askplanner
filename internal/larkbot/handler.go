@@ -119,9 +119,12 @@ func answerPreparedQuestion(ctx context.Context, responder responderClient, pref
 	}
 	log.Printf("[larkbot] answering question: %q (conversation=%s)", question, prepared.conversationKey)
 
-	enriched, err := prefetcher.Enrich(ctx, prepared.userKey, question, workspace.BindRuntimeContext(codex.RuntimeContext{
-		Attachment: prepared.attachmentCtx,
-	}, ws))
+	baseRuntime := workspace.BindRuntimeContext(codex.RuntimeContext{
+		Attachment:   prepared.attachmentCtx,
+		Thread:       prepared.threadCtx,
+		ThreadLoader: prepared.threadCtxLoader,
+	}, ws)
+	enriched, err := prefetcher.Enrich(ctx, prepared.userKey, question, baseRuntime)
 	if err != nil {
 		if msg := clinic.UserFacingMessage(err); msg != "" {
 			log.Printf("[larkbot] clinic prefetch user-visible error: %v (conversation=%s)",
@@ -132,6 +135,12 @@ func answerPreparedQuestion(ctx context.Context, responder responderClient, pref
 	}
 
 	enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
+	if enriched.RuntimeContext.Thread == nil {
+		enriched.RuntimeContext.Thread = prepared.threadCtx
+	}
+	if enriched.RuntimeContext.ThreadLoader == nil {
+		enriched.RuntimeContext.ThreadLoader = prepared.threadCtxLoader
+	}
 	if strings.TrimSpace(enriched.IntroReply) != "" {
 		return joinReplySections(enriched.IntroReply, formatWarning(enriched.Warning)), nil
 	}

@@ -9,6 +9,7 @@ cmd/askplanner (CLI REPL)  ─┐
 cmd/larkbot (bootstrap)    ─┤
                              ├→ internal/larkbot/app (Feishu bot app lifecycle)
                              │       → internal/larkbot/handler (message routing)
+                             │       → internal/larkbot/thread_context (topic history prefetch for new sessions)
                              │       → internal/attachments (user file library)
                              │       → internal/clinic (slow query prefetch)
                              │       → internal/workspace (per-user repo workspace)
@@ -31,6 +32,7 @@ cmd/larkbot (bootstrap)    ─┤
 | `internal/larkbot/app.go` | Lark bot app bootstrap, dependency wiring, websocket event loop |
 | `internal/larkbot/handler.go` | Message preparation, workspace command flow, Codex/Clinic orchestration |
 | `internal/larkbot/message.go` | Feishu message parsing, mention detection, conversation key derivation |
+| `internal/larkbot/thread_context.go` | Feishu topic-thread history prefetch and runtime-context building for new sessions |
 | `internal/larkbot/attachments.go` | `/upload_n` handling, attachment download/import/context building |
 | `internal/larkbot/reply.go` | Reply body rendering, typing reaction, Feishu reply API |
 | `internal/workspace/manager.go` | Per-user workspace lifecycle, repo switch/sync/reset, background jobs |
@@ -99,6 +101,7 @@ Requires: **Go 1.23+**, **codex CLI** in PATH, git submodules initialized.
 
 - Keys: `cli:default` (CLI), `lark:thread:*` / `lark:chat:*:user:*` (bot)
 - **Resume** if: same prompt hash, same work dir, same environment hash, turns < max, TTL not expired
+- For Lark topic messages with non-empty `thread_id`, the relay prefetches earlier visible thread messages and injects them only into the **initial** prompt of a new bot session; resume prompts do not repeat thread history
 - On resume failure: auto-starts new session with last 6 turns as context
 - Editing `prompt` invalidates all sessions (hash changes)
 

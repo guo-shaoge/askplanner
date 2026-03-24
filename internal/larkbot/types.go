@@ -1,6 +1,7 @@
 package larkbot
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -11,7 +12,10 @@ import (
 const (
 	messagePageSize              = 50
 	maxUploadCommandPages        = 20
+	maxThreadContextPages        = 20
 	promptAttachmentSummaryLimit = 20
+	promptThreadMessageLimit     = 20
+	promptThreadContentLimit     = 600
 	typingReactionType           = "Typing"
 	feishuReactionTimeout        = 10 * time.Second
 )
@@ -47,6 +51,8 @@ type preparedReply struct {
 	directReply     string
 	skipCodex       bool
 	attachmentCtx   codex.AttachmentContext
+	threadCtx       *codex.ThreadContext
+	threadCtxLoader func(context.Context) (*codex.ThreadContext, error)
 	workspaceCmd    *workspace.Command
 	conversationKey string
 	userKey         string
