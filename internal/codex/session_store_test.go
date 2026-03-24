@@ -34,3 +34,36 @@ func TestFileSessionStoreDeleteIf(t *testing.T) {
 		t.Fatalf("record b missing")
 	}
 }
+
+func TestFileSessionStoreUpdateIf(t *testing.T) {
+	store, err := NewFileSessionStore(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+
+	if err := store.Put(SessionRecord{ConversationKey: "a", UserKey: "u1", EnvironmentHash: "env-a"}); err != nil {
+		t.Fatalf("put a: %v", err)
+	}
+	if err := store.Put(SessionRecord{ConversationKey: "b", UserKey: "u1", EnvironmentHash: "env-b"}); err != nil {
+		t.Fatalf("put b: %v", err)
+	}
+
+	updated, err := store.UpdateIf(func(record SessionRecord) bool {
+		return record.UserKey == "u1" && record.EnvironmentHash != "env-new"
+	}, func(record *SessionRecord) bool {
+		record.PendingNotice = &WorkspaceSessionNotice{
+			Message:            "workspace changed",
+			NewEnvironmentHash: "env-new",
+		}
+		return true
+	})
+	if err != nil {
+		t.Fatalf("update if: %v", err)
+	}
+	if updated != 2 {
+		t.Fatalf("updated = %d, want 2", updated)
+	}
+	if record, ok := store.Get("a"); !ok || record.PendingNotice == nil {
+		t.Fatalf("record a pending notice missing: %+v %t", record, ok)
+	}
+}

@@ -15,11 +15,16 @@ import (
 type fakeResponder struct {
 	answer            string
 	err               error
+	markErr           error
 	calls             int
+	markCalls         int
 	lastContext       context.Context
 	lastConversation  string
 	lastQuestion      string
 	lastRuntime       codex.RuntimeContext
+	lastNoticeUser    string
+	lastNoticeConv    string
+	lastNotice        codex.WorkspaceSessionNotice
 	modelState        codex.ModelState
 	setModelResult    codex.ModelChangeResult
 	setModelErr       error
@@ -96,6 +101,14 @@ func (f *fakeResponder) ResetReasoningEffort(conversationKey string) (codex.Mode
 	return f.resetEffortResult, nil
 }
 
+func (f *fakeResponder) MarkWorkspaceChanged(userKey, sourceConversationKey string, notice codex.WorkspaceSessionNotice) error {
+	f.markCalls++
+	f.lastNoticeUser = userKey
+	f.lastNoticeConv = sourceConversationKey
+	f.lastNotice = notice
+	return f.markErr
+}
+
 type fakePrefetcher struct {
 	result       clinic.EnrichResult
 	err          error
@@ -122,20 +135,23 @@ func (f *fakePrefetcher) Enrich(ctx context.Context, userKey, question string, r
 }
 
 type fakeWorkspaceService struct {
-	ensureWS    *workspace.Workspace
-	ensureErr   error
-	statusWS    *workspace.Workspace
-	statusErr   error
-	switchWS    *workspace.Workspace
-	switchErr   error
-	syncWS      *workspace.Workspace
-	syncErr     error
-	resetWS     *workspace.Workspace
-	resetErr    error
-	lastAction  string
-	lastUserKey string
-	lastRepo    string
-	lastRef     string
+	ensureWS      *workspace.Workspace
+	ensureErr     error
+	statusWS      *workspace.Workspace
+	statusErr     error
+	switchWS      *workspace.Workspace
+	switchChanged bool
+	switchErr     error
+	syncWS        *workspace.Workspace
+	syncChanged   bool
+	syncErr       error
+	resetWS       *workspace.Workspace
+	resetChanged  bool
+	resetErr      error
+	lastAction    string
+	lastUserKey   string
+	lastRepo      string
+	lastRef       string
 }
 
 func (f *fakeWorkspaceService) Ensure(ctx context.Context, userKey string) (*workspace.Workspace, error) {
@@ -150,26 +166,26 @@ func (f *fakeWorkspaceService) Status(ctx context.Context, userKey string) (*wor
 	return f.statusWS, f.statusErr
 }
 
-func (f *fakeWorkspaceService) SwitchRepo(ctx context.Context, userKey, repoName, ref string) (*workspace.Workspace, error) {
+func (f *fakeWorkspaceService) SwitchRepo(ctx context.Context, userKey, repoName, ref string) (*workspace.Workspace, bool, error) {
 	f.lastAction = "switch"
 	f.lastUserKey = userKey
 	f.lastRepo = repoName
 	f.lastRef = ref
-	return f.switchWS, f.switchErr
+	return f.switchWS, f.switchChanged, f.switchErr
 }
 
-func (f *fakeWorkspaceService) Sync(ctx context.Context, userKey, repoName string) (*workspace.Workspace, error) {
+func (f *fakeWorkspaceService) Sync(ctx context.Context, userKey, repoName string) (*workspace.Workspace, bool, error) {
 	f.lastAction = "sync"
 	f.lastUserKey = userKey
 	f.lastRepo = repoName
-	return f.syncWS, f.syncErr
+	return f.syncWS, f.syncChanged, f.syncErr
 }
 
-func (f *fakeWorkspaceService) Reset(ctx context.Context, userKey, repoName string) (*workspace.Workspace, error) {
+func (f *fakeWorkspaceService) Reset(ctx context.Context, userKey, repoName string) (*workspace.Workspace, bool, error) {
 	f.lastAction = "reset"
 	f.lastUserKey = userKey
 	f.lastRepo = repoName
-	return f.resetWS, f.resetErr
+	return f.resetWS, f.resetChanged, f.resetErr
 }
 
 func TestHandlePreparedReplyPrefixesAnswerForStandardQuestion(t *testing.T) {
@@ -208,6 +224,9 @@ func TestHandlePreparedReplyPrefixesAnswerForStandardQuestion(t *testing.T) {
 	}
 	if responder.lastRuntime.Workspace == nil || responder.lastRuntime.Workspace.RootDir != ws.RootDir {
 		t.Fatalf("responder workspace root = %+v", responder.lastRuntime.Workspace)
+	}
+	if responder.lastRuntime.UserKey != "ou_user" {
+		t.Fatalf("responder user key = %q, want ou_user", responder.lastRuntime.UserKey)
 	}
 	if responder.lastRuntime.Thread == nil || responder.lastRuntime.Thread.ThreadID != "omt-thread" {
 		t.Fatalf("responder thread context = %+v", responder.lastRuntime.Thread)
@@ -371,6 +390,67 @@ func TestHandlePreparedReplyRunsWorkspaceSwitchQuestionWithUserFacingError(t *te
 	}
 	if responder.calls != 0 {
 		t.Fatalf("responder calls = %d, want 0", responder.calls)
+	}
+	if responder.markCalls != 0 {
+		t.Fatalf("mark calls = %d, want 0", responder.markCalls)
+	}
+}
+
+func TestHandlePreparedReplyMarksOtherConversationsAfterWorkspaceChange(t *testing.T) {
+	ws := newWorkspaceFixture()
+	responder := &fakeResponder{answer: "workspace answer"}
+	prefetcher := &fakePrefetcher{passthrough: true}
+	workspaceSvc := &fakeWorkspaceService{switchWS: ws, switchChanged: true}
+
+	prepared := &preparedReply{
+		question:        "inspect this branch",
+		workspaceCmd:    &workspace.Command{Action: "switch", Repo: "tidb", Ref: "release-8.5"},
+		conversationKey: "conv-6",
+		userKey:         "ou_user",
+	}
+
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	if err != nil {
+		t.Fatalf("handlePreparedReply error: %v", err)
+	}
+	want := workspace.FormatStatus(ws) + "\n\nworkspace answer"
+	if got != want {
+		t.Fatalf("result mismatch:\n got: %q\nwant: %q", got, want)
+	}
+	if responder.markCalls != 1 {
+		t.Fatalf("mark calls = %d, want 1", responder.markCalls)
+	}
+	if responder.lastNoticeUser != "ou_user" || responder.lastNoticeConv != "conv-6" {
+		t.Fatalf("mark args = user:%q conv:%q", responder.lastNoticeUser, responder.lastNoticeConv)
+	}
+	if responder.lastNotice.NewEnvironmentHash != ws.EnvironmentHash {
+		t.Fatalf("notice env hash = %q, want %q", responder.lastNotice.NewEnvironmentHash, ws.EnvironmentHash)
+	}
+	if responder.lastNotice.Message == "" {
+		t.Fatalf("notice message is empty")
+	}
+}
+
+func TestHandlePreparedReplyIgnoresWorkspaceMarkFailure(t *testing.T) {
+	ws := newWorkspaceFixture()
+	responder := &fakeResponder{answer: "workspace answer", markErr: context.DeadlineExceeded}
+	prefetcher := &fakePrefetcher{passthrough: true}
+	workspaceSvc := &fakeWorkspaceService{resetWS: ws, resetChanged: true}
+
+	prepared := &preparedReply{
+		question:        "what changed",
+		workspaceCmd:    &workspace.Command{Action: "reset", Repo: "all"},
+		conversationKey: "conv-7",
+		userKey:         "ou_user",
+	}
+
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	if err != nil {
+		t.Fatalf("handlePreparedReply error: %v", err)
+	}
+	want := workspace.FormatStatus(ws) + "\n\nworkspace answer"
+	if got != want {
+		t.Fatalf("result mismatch:\n got: %q\nwant: %q", got, want)
 	}
 }
 

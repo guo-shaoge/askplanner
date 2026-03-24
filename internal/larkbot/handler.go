@@ -21,6 +21,7 @@ type responderClient interface {
 	ResetModel(conversationKey string) (codex.ModelChangeResult, error)
 	SetReasoningEffort(conversationKey, effort string) (codex.ModelChangeResult, error)
 	ResetReasoningEffort(conversationKey string) (codex.ModelChangeResult, error)
+	MarkWorkspaceChanged(userKey, sourceConversationKey string, notice codex.WorkspaceSessionNotice) error
 }
 
 type prefetcherService interface {
@@ -30,9 +31,9 @@ type prefetcherService interface {
 type workspaceService interface {
 	Ensure(ctx context.Context, userKey string) (*workspace.Workspace, error)
 	Status(ctx context.Context, userKey string) (*workspace.Workspace, error)
-	SwitchRepo(ctx context.Context, userKey, repoName, ref string) (*workspace.Workspace, error)
-	Sync(ctx context.Context, userKey, repoName string) (*workspace.Workspace, error)
-	Reset(ctx context.Context, userKey, repoName string) (*workspace.Workspace, error)
+	SwitchRepo(ctx context.Context, userKey, repoName, ref string) (*workspace.Workspace, bool, error)
+	Sync(ctx context.Context, userKey, repoName string) (*workspace.Workspace, bool, error)
+	Reset(ctx context.Context, userKey, repoName string) (*workspace.Workspace, bool, error)
 }
 
 func (a *App) answerEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) (string, error) {
@@ -148,23 +149,35 @@ func runModelCommand(ctx context.Context, workspaceManager workspaceService, res
 func runWorkspaceCommand(ctx context.Context, manager workspaceService, responder responderClient, prefetcher prefetcherService, prepared *preparedReply) (string, error) {
 	start := time.Now()
 	var (
-		ws  *workspace.Workspace
-		err error
+		ws                 *workspace.Workspace
+		err                error
+		environmentChanged bool
 	)
 	switch prepared.workspaceCmd.Action {
 	case "status":
 		ws, err = manager.Status(ctx, prepared.userKey)
 	case "switch":
-		ws, err = manager.SwitchRepo(ctx, prepared.userKey, prepared.workspaceCmd.Repo, prepared.workspaceCmd.Ref)
+		ws, environmentChanged, err = manager.SwitchRepo(ctx, prepared.userKey, prepared.workspaceCmd.Repo, prepared.workspaceCmd.Ref)
 	case "sync":
-		ws, err = manager.Sync(ctx, prepared.userKey, prepared.workspaceCmd.Repo)
+		ws, environmentChanged, err = manager.Sync(ctx, prepared.userKey, prepared.workspaceCmd.Repo)
 	case "reset":
-		ws, err = manager.Reset(ctx, prepared.userKey, prepared.workspaceCmd.Repo)
+		ws, environmentChanged, err = manager.Reset(ctx, prepared.userKey, prepared.workspaceCmd.Repo)
 	default:
 		return "", fmt.Errorf("unsupported workspace command: %s", prepared.workspaceCmd.Action)
 	}
 	if err != nil {
 		return "", err
+	}
+	if environmentChanged {
+		notice := codex.WorkspaceSessionNotice{
+			Message:            buildWorkspaceChangeNotice(prepared.workspaceCmd),
+			NewEnvironmentHash: ws.EnvironmentHash,
+			ChangedAt:          time.Now().UTC(),
+		}
+		if err := responder.MarkWorkspaceChanged(prepared.userKey, prepared.conversationKey, notice); err != nil {
+			log.Printf("[larkbot] mark workspace changed failed conversation=%s user=%s: %v",
+				prepared.conversationKey, prepared.userKey, err)
+		}
 	}
 
 	status := workspace.FormatStatus(ws)
@@ -195,6 +208,7 @@ func answerPreparedQuestion(ctx context.Context, responder responderClient, pref
 		Attachment:   prepared.attachmentCtx,
 		Thread:       prepared.threadCtx,
 		ThreadLoader: prepared.threadCtxLoader,
+		UserKey:      prepared.userKey,
 	}, ws)
 	enriched, err := prefetcher.Enrich(ctx, prepared.userKey, question, baseRuntime)
 	if err != nil {
@@ -213,6 +227,9 @@ func answerPreparedQuestion(ctx context.Context, responder responderClient, pref
 	if enriched.RuntimeContext.ThreadLoader == nil {
 		enriched.RuntimeContext.ThreadLoader = prepared.threadCtxLoader
 	}
+	if strings.TrimSpace(enriched.RuntimeContext.UserKey) == "" {
+		enriched.RuntimeContext.UserKey = prepared.userKey
+	}
 	if strings.TrimSpace(enriched.IntroReply) != "" {
 		return joinReplySections(enriched.IntroReply, formatWarning(enriched.Warning)), nil
 	}
@@ -224,4 +241,20 @@ func answerPreparedQuestion(ctx context.Context, responder responderClient, pref
 		answer = joinReplySections(formatWarning(enriched.Warning), answer)
 	}
 	return answer, nil
+}
+
+func buildWorkspaceChangeNotice(cmd *workspace.Command) string {
+	if cmd == nil {
+		return "Another chat changed the shared workspace, so this conversation had to start a new Codex session."
+	}
+	switch cmd.Action {
+	case "switch":
+		return fmt.Sprintf("Another chat switched the shared workspace to %s@%s, so this conversation had to start a new Codex session.", cmd.Repo, cmd.Ref)
+	case "sync":
+		return fmt.Sprintf("Another chat synced the shared workspace repo %s, which changed the workspace environment, so this conversation had to start a new Codex session.", cmd.Repo)
+	case "reset":
+		return fmt.Sprintf("Another chat reset the shared workspace repo %s to its default ref, so this conversation had to start a new Codex session.", cmd.Repo)
+	default:
+		return "Another chat changed the shared workspace, so this conversation had to start a new Codex session."
+	}
 }

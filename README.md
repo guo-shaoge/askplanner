@@ -59,10 +59,11 @@ Practical notes:
 
 1. A user asks a TiDB optimizer question in the local REPL or in Lark.
 2. askplanner loads the domain prompt from `prompt` or falls back to the in-process prompt builder.
-3. The prompt is normalized for Codex CLI. askplanner-specific tool references such as `read_file` and `search_docs` are translated into shell-based workspace exploration rules.
-4. askplanner starts a new Codex session with `codex exec` or resumes an existing one with `codex exec resume`.
-5. Codex reads local skills, local TiDB docs, and local TiDB source code from the workspace and returns the answer.
-6. askplanner persists the conversation's `session_id` in `.askplanner/codex_sessions.json` so later turns can reuse the same Codex thread.
+3. For Lark bot users, askplanner provisions a **per-user workspace** with isolated git worktrees of TiDB source, docs, and agent-rules (shared bare mirrors avoid full clones per user). Users can switch repo versions via `/ws switch tidb <ref>`. The workspace state is tracked in `workspace.json` and influences session resumption through an environment hash.
+4. The prompt is normalized for Codex CLI. askplanner-specific tool references such as `read_file` and `search_docs` are translated into shell-based workspace exploration rules.
+5. askplanner starts a new Codex session with `codex exec` or resumes an existing one with `codex exec resume`.
+6. Codex reads local skills, local TiDB docs, and local TiDB source code from the workspace and returns the answer.
+7. askplanner persists the conversation's `session_id` in `.askplanner/codex_sessions.json` so later turns can reuse the same Codex thread.
 
 The runtime is intentionally simple:
 - No custom MCP tool bridge yet.
@@ -161,6 +162,21 @@ For every Codex request, the runtime injects the current user's library root pat
 
 Both `file` and `image` attachments are supported. Other message types (audio, video, sticker, etc.) are not yet supported.
 
+### Workspace Commands
+
+Users can manage their per-user workspace (TiDB source version, docs, skills) directly in the chat:
+
+```
+/ws status                              # show current workspace state
+/ws switch tidb release-8.1 -- question # switch TiDB to a branch and ask a question
+/ws sync [repo|all]                     # pull latest from remote and re-checkout
+/ws reset [repo|all]                    # revert to default branch
+```
+
+Switching `tidb` automatically follows `tidb-docs` to the same branch if it exists. See the Workspace section in AGENTS.md for architecture details.
+
+### Conversation Keys
+
 The bot computes a conversation key from:
 - `thread_id + sender_id` when present
 - otherwise `chat_id + sender_id`
@@ -170,7 +186,9 @@ That conversation key maps to a Codex `session_id` in the local session store.
 
 ## Configuration
 
-The main runtime is now driven by Codex-related environment variables.
+All configuration is via environment variables. See AGENTS.md for the full reference table.
+
+Core variables:
 
 | Env Var | Default | Description |
 |--------|---------|-------------|
@@ -181,13 +199,39 @@ The main runtime is now driven by Codex-related environment variables.
 | `CODEX_PROJECT_ROOT` | `.` | Working root for Codex |
 | `CODEX_PROMPT_COMMAND` | `bin/printprompt` | Prompt command, supports args such as `bin/printprompt --normalized` |
 | `CODEX_SESSION_STORE` | `.askplanner/codex_sessions.json` | Session store path |
+| `CODEX_REASONING_EFFORT` | `medium` | `low` / `medium` / `high` |
+| `CODEX_SESSION_STORE` | `.askplanner/sessions.json` | Session store path |
 | `CODEX_MAX_TURNS` | `30` | Max turns before forcing a new Codex session |
 | `CODEX_SESSION_TTL_HOURS` | `24` | Session TTL |
 | `CODEX_TIMEOUT_SEC` | `120` | Timeout per Codex subprocess |
-| `SKILLS_DIR` | `contrib/agent-rules/skills/tidb-query-tuning/references` | Skills path |
-| `TIDB_CODE_DIR` | `contrib/tidb` | TiDB source path |
-| `TIDB_DOCS_DIR` | `contrib/tidb-docs` | TiDB docs path |
-| `DOCS_OVERLAY_DIR` | `prompts/tidb-query-tuning-official-docs` | Curated docs overlay |
+| `LOG_FILE` | `.askplanner/askplanner.log` | Log file path |
+| `PROJECT_ROOT` | auto-detected | Walks up looking for `prompt` file |
+| `PROMPT_FILE` | `prompt` | Relative to project root |
+
+Workspace variables:
+
+| Env Var | Default | Description |
+|--------|---------|-------------|
+| `WORKSPACE_ROOT` | `.askplanner/workspaces` | Per-user workspace root |
+| `WORKSPACE_IDLE_TTL_HOURS` | `72` | Idle workspace TTL before GC |
+| `WORKSPACE_GC_INTERVAL_MIN` | `15` | Workspace GC sweep interval |
+| `AGENT_RULES_SYNC_INTERVAL_MIN` | `10` | `agent-rules` mirror sync interval |
+| `WORKSPACE_REPO_TIDB_URL` | (gh-proxy mirror) | TiDB mirror remote |
+| `WORKSPACE_REPO_TIDB_DEFAULT_REF` | `master` | Default TiDB ref |
+| `WORKSPACE_REPO_AGENT_RULES_URL` | (gh-proxy mirror) | Agent rules mirror remote |
+| `WORKSPACE_REPO_AGENT_RULES_DEFAULT_REF` | `main` | Default agent-rules ref |
+| `WORKSPACE_REPO_TIDB_DOCS_URL` | `https://github.com/pingcap/docs.git` | TiDB docs remote |
+| `WORKSPACE_REPO_TIDB_DOCS_DEFAULT_REF` | `master` | Default docs ref |
+
+Clinic variables:
+
+| Env Var | Default | Description |
+|--------|---------|-------------|
+| `CLINIC_ENABLE_AUTO_SLOWQUERY` | `false` | Enable Clinic auto-prefetch |
+| `CLINIC_API_KEY` | — | Required when Clinic auto-prefetch is enabled |
+| `CLINIC_HTTP_TIMEOUT_SEC` | `15` | Clinic API timeout |
+| `CLINIC_STORE_DIR` | `<WORKSPACE_ROOT>/clinic` | Stored Clinic snapshots |
+| `CLINIC_STORE_MAX_ITEMS` | `50` | Max Clinic snapshots per user |
 
 Lark-specific variables:
 
@@ -195,9 +239,10 @@ Lark-specific variables:
 |--------|----------|-------------|
 | `FEISHU_APP_ID` | Yes | Feishu app ID |
 | `FEISHU_APP_SECRET` | Yes | Feishu app secret |
-| `FEISHU_BOT_NAME` | No | Bot display name used to match mentions in group chats; defaults to `askplanner` |
-| `FEISHU_FILE_DIR` | No | Root directory of the persistent per-user Lark attachment library; defaults to `.askplanner/lark-files` |
-| `FEISHU_USER_FILE_MAX_ITEMS` | No | Maximum number of top-level items kept per user library; defaults to `100` |
+| `FEISHU_BOT_NAME` | No | Bot display name for group-chat mention matching; defaults to `askplanner` |
+| `FEISHU_DEDUP_MESSAGE_TIMEOUT_IN_MIN` | No | Dedup window in minutes; defaults to `3600` |
+| `FEISHU_FILE_DIR` | No | Per-user attachment library root; defaults to `<WORKSPACE_ROOT>/uploads` |
+| `FEISHU_USER_FILE_MAX_ITEMS` | No | Max top-level items per user library; defaults to `100` |
 
 ## Build and Verify
 
@@ -208,22 +253,23 @@ go build -o bin/printprompt ./cmd/printprompt
 go test ./...
 ```
 ## Roadmap
-### user pesepctive
+### user perspective
 - [x] fix the larkbot message resent problem
 - [x] support process image
 - [x] support process plan replayer(unzip replayer and start diagnose automatically)
 - [x] support diagnose by clinic link
 - [x] support Feishu rich-text (`post`) plan questions and quote-style refs ([#12](https://github.com/guo-shaoge/askplanner/issues/12))
 - [x] output a markdown file if output too long
-- [ ] error handling: make sure all errors should return to user clearly(like network issue, rate limte ect)
+- [x] error handling: make sure all errors should return to user clearly(like network issue, rate limte ect) (https://github.com/guo-shaoge/askplanner/pull/17)
+- [x] support switch to different release version of tidb repo and tidb-docs repo (https://github.com/guo-shaoge/askplanner/commit/4e11ec3ac9f319d5bec545eeb0d159a452bf7d56)
 - [ ] support process clinic in batch mode
-- [ ] support switch to different release version of tidb repo and tidb-docs repo
 - [ ] support context management
 - [x] support model management
 - [ ] slow query finder
 - [ ] optimize the response time, especially the first user input request
+- [ ] add a watchdog/daemon to keep the askplanner background process alive
 
-### implementation pespective
+### implementation perspective
 - [ ] rotate log to avoid getting log too large
 - [ ] optimize the write process of session store
 - [ ] security related: better put agent in docker

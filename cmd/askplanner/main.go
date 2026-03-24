@@ -143,7 +143,7 @@ func main() {
 			fmt.Printf("%s\n\n", usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs."))
 			continue
 		}
-		enriched, err := prefetcher.Enrich(ctx, clinicUserKey, question, workspace.BindRuntimeContext(codex.RuntimeContext{}, ws))
+		enriched, err := prefetcher.Enrich(ctx, clinicUserKey, question, workspace.BindRuntimeContext(codex.RuntimeContext{UserKey: clinicUserKey}, ws))
 		if err != nil {
 			if msg := clinic.UserFacingMessage(err); msg != "" {
 				log.Printf("[askplanner] clinic prefetch user-visible error: %v", err)
@@ -154,6 +154,7 @@ func main() {
 			continue
 		}
 		enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
+		enriched.RuntimeContext.UserKey = clinicUserKey
 		if strings.TrimSpace(enriched.IntroReply) != "" {
 			fmt.Println(joinReplySections(enriched.IntroReply, formatWarning(enriched.Warning)))
 			fmt.Println()
@@ -257,30 +258,41 @@ func runModelCommand(ctx context.Context, workspaceManager *workspace.Manager, r
 func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, responder *codex.Responder, prefetcher *clinic.Prefetcher, conversationKey, userKey string, cmd *workspace.Command) (string, error) {
 	start := time.Now()
 	var (
-		ws  *workspace.Workspace
-		err error
+		ws                 *workspace.Workspace
+		err                error
+		environmentChanged bool
 	)
 	switch cmd.Action {
 	case "status":
 		ws, err = manager.Status(ctx, userKey)
 	case "switch":
-		ws, err = manager.SwitchRepo(ctx, userKey, cmd.Repo, cmd.Ref)
+		ws, environmentChanged, err = manager.SwitchRepo(ctx, userKey, cmd.Repo, cmd.Ref)
 	case "sync":
-		ws, err = manager.Sync(ctx, userKey, cmd.Repo)
+		ws, environmentChanged, err = manager.Sync(ctx, userKey, cmd.Repo)
 	case "reset":
-		ws, err = manager.Reset(ctx, userKey, cmd.Repo)
+		ws, environmentChanged, err = manager.Reset(ctx, userKey, cmd.Repo)
 	default:
 		return "", fmt.Errorf("unsupported workspace command: %s", cmd.Action)
 	}
 	if err != nil {
 		return "", err
 	}
+	if environmentChanged {
+		notice := codex.WorkspaceSessionNotice{
+			Message:            buildCLIWorkspaceChangeNotice(cmd),
+			NewEnvironmentHash: ws.EnvironmentHash,
+			ChangedAt:          time.Now().UTC(),
+		}
+		if err := responder.MarkWorkspaceChanged(userKey, conversationKey, notice); err != nil {
+			log.Printf("[askplanner] mark workspace changed failed conversation=%s user=%s: %v", conversationKey, userKey, err)
+		}
+	}
 	status := workspace.FormatStatus(ws)
 	if strings.TrimSpace(cmd.Question) == "" {
 		return status, nil
 	}
 
-	enriched, err := prefetcher.Enrich(ctx, userKey, cmd.Question, workspace.BindRuntimeContext(codex.RuntimeContext{}, ws))
+	enriched, err := prefetcher.Enrich(ctx, userKey, cmd.Question, workspace.BindRuntimeContext(codex.RuntimeContext{UserKey: userKey}, ws))
 	if err != nil {
 		if msg := clinic.UserFacingMessage(err); msg != "" {
 			return joinReplySections(status, msg), nil
@@ -288,6 +300,7 @@ func runWorkspaceCommand(ctx context.Context, manager *workspace.Manager, respon
 		return "", err
 	}
 	enriched.RuntimeContext = workspace.BindRuntimeContext(enriched.RuntimeContext, ws)
+	enriched.RuntimeContext.UserKey = userKey
 	if strings.TrimSpace(enriched.IntroReply) != "" {
 		return joinReplySections(status, enriched.IntroReply, formatWarning(enriched.Warning)), nil
 	}
@@ -339,7 +352,23 @@ func formatWarning(message string) string {
 	if message == "" {
 		return ""
 	}
-	return "Warning: " + message
+	return "**Warning**\n" + message
+}
+
+func buildCLIWorkspaceChangeNotice(cmd *workspace.Command) string {
+	if cmd == nil {
+		return "Another chat changed the shared workspace, so this conversation had to start a new Codex session."
+	}
+	switch cmd.Action {
+	case "switch":
+		return fmt.Sprintf("Another chat switched the shared workspace to %s@%s, so this conversation had to start a new Codex session.", cmd.Repo, cmd.Ref)
+	case "sync":
+		return fmt.Sprintf("Another chat synced the shared workspace repo %s, which changed the workspace environment, so this conversation had to start a new Codex session.", cmd.Repo)
+	case "reset":
+		return fmt.Sprintf("Another chat reset the shared workspace repo %s to its default ref, so this conversation had to start a new Codex session.", cmd.Repo)
+	default:
+		return "Another chat changed the shared workspace, so this conversation had to start a new Codex session."
+	}
 }
 
 func fatalStartup(component string, err error, hints ...string) {
