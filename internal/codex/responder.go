@@ -393,5 +393,5 @@ func formatAnswerWarning(warning string) string {
 	if warning == "" {
 		return ""
 	}
-	return "**Warning:** " + warning + " The bot has lost your previous conversation content!!!"
+	return "**Warning:** " + warning + " The bot has lost your previous conversation context, but the files, images, and Clinic information you uploaded are still retained.!!!"
 }
