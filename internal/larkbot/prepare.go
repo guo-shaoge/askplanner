@@ -11,6 +11,7 @@ import (
 
 	"lab/askplanner/internal/attachments"
 	"lab/askplanner/internal/codex"
+	"lab/askplanner/internal/modelcmd"
 	"lab/askplanner/internal/selfcmd"
 	"lab/askplanner/internal/usererr"
 	"lab/askplanner/internal/workspace"
@@ -96,6 +97,18 @@ func prepareTextLikeReply(ctx context.Context, apiClient *lark.Client, manager *
 		return &preparedReply{
 			directReply:     buildWhoAmIReply(userKey, conversationKey),
 			skipCodex:       true,
+			conversationKey: conversationKey,
+			userKey:         userKey,
+		}, nil
+	}
+	if modelCommand, matched, err := modelcmd.ParseCommand(text); matched {
+		if err != nil {
+			return nil, err
+		}
+		return &preparedReply{
+			question:        strings.TrimSpace(modelCommand.Question),
+			attachmentCtx:   attachmentCtx,
+			modelCmd:        modelCommand,
 			conversationKey: conversationKey,
 			userKey:         userKey,
 		}, nil

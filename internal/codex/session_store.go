@@ -20,16 +20,18 @@ type Turn struct {
 }
 
 type SessionRecord struct {
-	ConversationKey string    `json:"conversation_key"`
-	SessionID       string    `json:"session_id"`
-	PromptHash      string    `json:"prompt_hash"`
-	WorkDir         string    `json:"work_dir"`
-	EnvironmentHash string    `json:"environment_hash,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	LastActiveAt    time.Time `json:"last_active_at"`
-	TurnCount       int       `json:"turn_count"`
-	Turns           []Turn    `json:"turns,omitempty"`
-	LastError       string    `json:"last_error,omitempty"`
+	ConversationKey         string    `json:"conversation_key"`
+	SessionID               string    `json:"session_id"`
+	PromptHash              string    `json:"prompt_hash"`
+	WorkDir                 string    `json:"work_dir"`
+	EnvironmentHash         string    `json:"environment_hash,omitempty"`
+	ModelOverride           string    `json:"model_override,omitempty"`
+	ReasoningEffortOverride string    `json:"reasoning_effort_override,omitempty"`
+	CreatedAt               time.Time `json:"created_at"`
+	LastActiveAt            time.Time `json:"last_active_at"`
+	TurnCount               int       `json:"turn_count"`
+	Turns                   []Turn    `json:"turns,omitempty"`
+	LastError               string    `json:"last_error,omitempty"`
 }
 
 type FileSessionStore struct {

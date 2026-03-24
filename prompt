@@ -26,6 +26,16 @@ Runtime rules:
   - `/ws switch <repo> <ref> -- <question>` — switch first, then answer the question using the updated workspace.
   - `/ws sync [repo|all]` — fetch the latest remote state for one repo or all managed repos and refresh the workspace checkout.
   - `/ws reset [repo|all]` — reset one repo or all managed repos to their configured default refs.
+- The relay also supports conversation-scoped model management.
+- If the user asks how to change the model, explain the supported `/model` commands directly instead of suggesting env var changes mid-conversation.
+- Supported model commands:
+  - `/model` or `/model status` — show the current effective model, default model, override status, and reasoning effort for this conversation.
+  - `/model set <model>` or `/model <model>` — switch this conversation to a specific Codex model.
+  - `/model set <model> -- <question>` — switch the model first, then answer the question with the new model.
+  - `/model effort <level>` — override the reasoning effort for the current conversation.
+  - `/model effort <level> -- <question>` — switch the reasoning effort first, then answer the question.
+  - `/model effort reset` — clear the conversation-level reasoning override and fall back to the selected model's default effort.
+  - `/model reset` — clear the conversation-level override and fall back to the configured default model.
 - `agent-rules` may be refreshed automatically by the relay on a schedule; if the user asks why the workspace changed, mention that managed repo auto-sync can update `agent-rules` at request boundaries.
 - If the user asks whether Codex can directly run `git checkout`, `git pull`, or edit managed repos by itself, answer that repo state changes are performed through relay-managed workspace commands, while Codex normally reads the prepared workspace.
 - If the user asks which repo names are valid for `/ws switch`, use these managed repo names: `tidb`, `agent-rules`, `tidb-docs`.

@@ -2,22 +2,37 @@ package larkbot
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"lab/askplanner/internal/clinic"
 	"lab/askplanner/internal/codex"
+	"lab/askplanner/internal/modelcmd"
 	"lab/askplanner/internal/usererr"
 	"lab/askplanner/internal/workspace"
 )
 
 type fakeResponder struct {
-	answer           string
-	err              error
-	calls            int
-	lastContext      context.Context
-	lastConversation string
-	lastQuestion     string
-	lastRuntime      codex.RuntimeContext
+	answer            string
+	err               error
+	calls             int
+	lastContext       context.Context
+	lastConversation  string
+	lastQuestion      string
+	lastRuntime       codex.RuntimeContext
+	modelState        codex.ModelState
+	setModelResult    codex.ModelChangeResult
+	setModelErr       error
+	resetModelResult  codex.ModelChangeResult
+	resetModelErr     error
+	setEffortResult   codex.ModelChangeResult
+	setEffortErr      error
+	resetEffortResult codex.ModelChangeResult
+	resetEffortErr    error
+	modelCalls        int
+	lastModel         string
+	lastEffort        string
+	lastModelAction   string
 }
 
 func (f *fakeResponder) AnswerWithContext(ctx context.Context, conversationKey, question string, runtime codex.RuntimeContext) (string, error) {
@@ -30,6 +45,55 @@ func (f *fakeResponder) AnswerWithContext(ctx context.Context, conversationKey, 
 		return "", f.err
 	}
 	return f.answer, nil
+}
+
+func (f *fakeResponder) GetModelState(conversationKey string) codex.ModelState {
+	f.modelCalls++
+	f.lastConversation = conversationKey
+	f.lastModelAction = "status"
+	return f.modelState
+}
+
+func (f *fakeResponder) SetModel(conversationKey, model string) (codex.ModelChangeResult, error) {
+	f.modelCalls++
+	f.lastConversation = conversationKey
+	f.lastModel = model
+	f.lastModelAction = "set"
+	if f.setModelErr != nil {
+		return codex.ModelChangeResult{}, f.setModelErr
+	}
+	return f.setModelResult, nil
+}
+
+func (f *fakeResponder) ResetModel(conversationKey string) (codex.ModelChangeResult, error) {
+	f.modelCalls++
+	f.lastConversation = conversationKey
+	f.lastModelAction = "reset"
+	if f.resetModelErr != nil {
+		return codex.ModelChangeResult{}, f.resetModelErr
+	}
+	return f.resetModelResult, nil
+}
+
+func (f *fakeResponder) SetReasoningEffort(conversationKey, effort string) (codex.ModelChangeResult, error) {
+	f.modelCalls++
+	f.lastConversation = conversationKey
+	f.lastEffort = effort
+	f.lastModelAction = "effort"
+	if f.setEffortErr != nil {
+		return codex.ModelChangeResult{}, f.setEffortErr
+	}
+	return f.setEffortResult, nil
+}
+
+func (f *fakeResponder) ResetReasoningEffort(conversationKey string) (codex.ModelChangeResult, error) {
+	f.modelCalls++
+	f.lastConversation = conversationKey
+	f.lastModelAction = "reset-effort"
+	if f.resetEffortErr != nil {
+		return codex.ModelChangeResult{}, f.resetEffortErr
+	}
+	return f.resetEffortResult, nil
 }
 
 type fakePrefetcher struct {
@@ -310,6 +374,122 @@ func TestHandlePreparedReplyRunsWorkspaceSwitchQuestionWithUserFacingError(t *te
 	}
 }
 
+func TestHandlePreparedReplyReturnsModelStatus(t *testing.T) {
+	responder := &fakeResponder{
+		modelState: codex.ModelState{
+			DefaultModel:           "gpt-5.3-codex",
+			EffectiveModel:         "gpt-5.4",
+			OverrideModel:          "gpt-5.4",
+			DefaultReasoningEffort: "medium",
+			ReasoningEffort:        "medium",
+			ReasoningOptions:       []codex.ReasoningEffortOption{{Effort: "low"}, {Effort: "medium"}, {Effort: "high"}},
+		},
+	}
+	workspaceSvc := &fakeWorkspaceService{}
+
+	prepared := &preparedReply{
+		modelCmd:        &modelcmd.Command{Action: "status"},
+		conversationKey: "conv-model",
+		userKey:         "ou_user",
+	}
+
+	got, err := handlePreparedReply(context.Background(), responder, &fakePrefetcher{}, workspaceSvc, prepared)
+	if err != nil {
+		t.Fatalf("handlePreparedReply error: %v", err)
+	}
+	if responder.lastModelAction != "status" {
+		t.Fatalf("model action = %q, want status", responder.lastModelAction)
+	}
+	if workspaceSvc.lastAction != "" {
+		t.Fatalf("workspace action = %q, want none", workspaceSvc.lastAction)
+	}
+	if got == "" || !containsAll(got, "Model: gpt-5.4", "Default Model: gpt-5.3-codex", "Reasoning Options: low, medium, high") {
+		t.Fatalf("unexpected result: %q", got)
+	}
+}
+
+func TestHandlePreparedReplySetsModelThenAnswersQuestion(t *testing.T) {
+	ws := newWorkspaceFixture()
+	responder := &fakeResponder{
+		answer: "model answer",
+		setModelResult: codex.ModelChangeResult{
+			State: codex.ModelState{
+				DefaultModel:           "gpt-5.3-codex",
+				EffectiveModel:         "gpt-5.4",
+				OverrideModel:          "gpt-5.4",
+				DefaultReasoningEffort: "medium",
+				ReasoningEffort:        "medium",
+				ReasoningOptions:       []codex.ReasoningEffortOption{{Effort: "low"}, {Effort: "medium"}, {Effort: "high"}},
+			},
+			Changed: true,
+		},
+	}
+	prefetcher := &fakePrefetcher{passthrough: true}
+	workspaceSvc := &fakeWorkspaceService{ensureWS: ws}
+
+	prepared := &preparedReply{
+		question:        "analyze this query",
+		modelCmd:        &modelcmd.Command{Action: "set", Model: "gpt-5.4"},
+		conversationKey: "conv-model-set",
+		userKey:         "ou_user",
+	}
+
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	if err != nil {
+		t.Fatalf("handlePreparedReply error: %v", err)
+	}
+	if responder.lastModelAction != "set" || responder.lastModel != "gpt-5.4" {
+		t.Fatalf("unexpected model call action=%q model=%q", responder.lastModelAction, responder.lastModel)
+	}
+	if workspaceSvc.lastAction != "ensure" {
+		t.Fatalf("workspace action = %q, want ensure", workspaceSvc.lastAction)
+	}
+	if !containsAll(got, "Model: gpt-5.4", "Default Model: gpt-5.3-codex", "model answer") {
+		t.Fatalf("unexpected result: %q", got)
+	}
+	if strings.Contains(got, "the next question will start a new Codex session") {
+		t.Fatalf("unexpected session restart message: %q", got)
+	}
+}
+
+func TestHandlePreparedReplySetsReasoningEffortThenAnswersQuestion(t *testing.T) {
+	ws := newWorkspaceFixture()
+	responder := &fakeResponder{
+		answer: "effort answer",
+		setEffortResult: codex.ModelChangeResult{
+			State: codex.ModelState{
+				DefaultModel:            "gpt-5.3-codex",
+				EffectiveModel:          "gpt-5.3-codex",
+				DefaultReasoningEffort:  "medium",
+				OverrideReasoningEffort: "high",
+				ReasoningEffort:         "high",
+				ReasoningOptions:        []codex.ReasoningEffortOption{{Effort: "low"}, {Effort: "medium"}, {Effort: "high"}},
+			},
+			Changed: true,
+		},
+	}
+	prefetcher := &fakePrefetcher{passthrough: true}
+	workspaceSvc := &fakeWorkspaceService{ensureWS: ws}
+
+	prepared := &preparedReply{
+		question:        "analyze this query",
+		modelCmd:        &modelcmd.Command{Action: "effort", Effort: "high"},
+		conversationKey: "conv-effort-set",
+		userKey:         "ou_user",
+	}
+
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	if err != nil {
+		t.Fatalf("handlePreparedReply error: %v", err)
+	}
+	if responder.lastModelAction != "effort" || responder.lastEffort != "high" {
+		t.Fatalf("unexpected effort call action=%q effort=%q", responder.lastModelAction, responder.lastEffort)
+	}
+	if !containsAll(got, "Reasoning: high", "Default Reasoning: medium", "effort answer") {
+		t.Fatalf("unexpected result: %q", got)
+	}
+}
+
 func newWorkspaceFixture() *workspace.Workspace {
 	return &workspace.Workspace{
 		UserKey:         "ou_user",
@@ -334,4 +514,13 @@ func runtimeContextEmpty(runtime codex.RuntimeContext) bool {
 		runtime.Thread == nil &&
 		runtime.ThreadLoader == nil &&
 		runtime.Workspace == nil
+}
+
+func containsAll(s string, parts ...string) bool {
+	for _, part := range parts {
+		if !strings.Contains(s, part) {
+			return false
+		}
+	}
+	return true
 }

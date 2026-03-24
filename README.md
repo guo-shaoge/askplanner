@@ -8,7 +8,7 @@ Here is an example of how to use it:
 ````text
 [Yes VPN-ON] [2026/03/19 6:32:52 Day-078] 192 :: ~/work/askplanner_v2 ‹main*› » ./bin/askplanner_cli
 askplanner v2 (backend: codex-cli, model: gpt-5.3-codex)
-Type your question, or 'quit' to exit. Use 'reset' to start a new session.
+Type your question, or 'quit' to exit. Use 'reset' to start a new session. Use '/model' to inspect or switch the model for this conversation.
 
 > hi
 
@@ -129,6 +129,7 @@ make
 The REPL supports:
 - regular questions
 - `reset` to drop the local Codex session
+- `/model`, `/model set <model>`, `/model effort <level>`, `/model reset`, `/model effort reset` for conversation-scoped model management
 - `quit` / `exit`
 
 ## Lark Bot
@@ -175,7 +176,7 @@ The main runtime is now driven by Codex-related environment variables.
 |--------|---------|-------------|
 | `CODEX_BIN` | `codex` | Codex CLI binary |
 | `CODEX_MODEL` | `gpt-5.3-codex` | Codex model |
-| `CODEX_REASONING_EFFORT` | `medium` | Reasoning effort passed via `model_reasoning_effort` |
+| `CODEX_REASONING_EFFORT` | `medium` | Default reasoning effort used for Codex execution when the selected model does not expose a cache-derived default |
 | `CODEX_SANDBOX` | `read-only` | Sandbox mode for `codex exec` |
 | `CODEX_PROJECT_ROOT` | `.` | Working root for Codex |
 | `CODEX_PROMPT_COMMAND` | `bin/printprompt` | Prompt command, supports args such as `bin/printprompt --normalized` |

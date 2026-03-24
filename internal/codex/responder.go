@@ -13,19 +13,23 @@ import (
 )
 
 type runnerClient interface {
-	RunNew(ctx context.Context, workDir, prompt string) (*RunResult, error)
-	RunResume(ctx context.Context, workDir, sessionID, prompt string) (*RunResult, error)
+	RunNew(ctx context.Context, workDir, model, reasoningEffort, prompt string) (*RunResult, error)
+	RunResume(ctx context.Context, workDir, sessionID, model, reasoningEffort, prompt string) (*RunResult, error)
 }
 
 type Responder struct {
-	runner         runnerClient
-	store          *FileSessionStore
-	prompt         string
-	promptHash     string
-	defaultWorkDir string
-	maxTurns       int
-	sessionTTL     time.Duration
-	timeout        time.Duration
+	runner                  runnerClient
+	store                   *FileSessionStore
+	prompt                  string
+	promptHash              string
+	defaultWorkDir          string
+	defaultModel            string
+	modelOptions            *ModelOptionsSource
+	defaultReasoningEffort  string
+	defaultReasoningOptions []ReasoningEffortOption
+	maxTurns                int
+	sessionTTL              time.Duration
+	timeout                 time.Duration
 }
 
 func NewResponder(cfg *config.Config) (*Responder, error) {
@@ -41,18 +45,22 @@ func NewResponder(cfg *config.Config) (*Responder, error) {
 
 	return &Responder{
 		runner: &Runner{
-			Bin:             cfg.CodexBin,
-			Model:           cfg.CodexModel,
-			ReasoningEffort: cfg.CodexReasoningEffort,
-			Sandbox:         cfg.CodexSandbox,
+			Bin:                    cfg.CodexBin,
+			DefaultModel:           cfg.CodexModel,
+			DefaultReasoningEffort: cfg.CodexReasoningEffort,
+			Sandbox:                cfg.CodexSandbox,
 		},
-		store:          store,
-		prompt:         prompt,
-		promptHash:     PromptHash(prompt),
-		defaultWorkDir: cfg.ProjectRoot,
-		maxTurns:       cfg.CodexMaxTurns,
-		sessionTTL:     time.Duration(cfg.CodexSessionTTLHours) * time.Hour,
-		timeout:        time.Duration(cfg.CodexTimeoutSec) * time.Second,
+		store:                   store,
+		prompt:                  prompt,
+		promptHash:              PromptHash(prompt),
+		defaultWorkDir:          cfg.ProjectRoot,
+		defaultModel:            strings.TrimSpace(cfg.CodexModel),
+		modelOptions:            NewModelOptionsSource([]string{cfg.CodexModel}),
+		defaultReasoningEffort:  strings.TrimSpace(strings.ToLower(cfg.CodexReasoningEffort)),
+		defaultReasoningOptions: defaultReasoningEffortOptions(),
+		maxTurns:                cfg.CodexMaxTurns,
+		sessionTTL:              time.Duration(cfg.CodexSessionTTLHours) * time.Hour,
+		timeout:                 time.Duration(cfg.CodexTimeoutSec) * time.Second,
 	}, nil
 }
 
@@ -71,14 +79,16 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 	now := time.Now().UTC()
 	record, ok := r.store.Get(conversationKey)
 	workDir := r.workDirForRuntime(runtime)
+	model := r.effectiveModel(record)
+	reasoningEffort := r.effectiveReasoningEffort(record)
 	envHash := r.environmentHashForRuntime(runtime, workDir)
-	log.Printf("[codex] answer start conversation=%s question_len=%d workdir=%s env=%s session_found=%t",
-		conversationKey, len(strings.TrimSpace(question)), workDir, compactText(envHash, 12), ok)
+	log.Printf("[codex] answer start conversation=%s question_len=%d workdir=%s model=%s effort=%s env=%s session_found=%t",
+		conversationKey, len(strings.TrimSpace(question)), workDir, model, reasoningEffort, compactText(envHash, 12), ok)
 
 	canResume, resumeReason := r.canResume(record, now, workDir, envHash)
 	if ok && canResume {
 		log.Printf("[codex] resume eligible conversation=%s session=%s", conversationKey, record.SessionID)
-		result, err := r.runner.RunResume(ctx, workDir, record.SessionID, BuildResumePrompt(question, runtime))
+		result, err := r.runner.RunResume(ctx, workDir, record.SessionID, model, reasoningEffort, BuildResumePrompt(question, runtime))
 		if err == nil {
 			record.LastActiveAt = now
 			record.TurnCount++
@@ -102,7 +112,7 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 
 	runtime = r.hydrateInitialRuntime(ctx, conversationKey, runtime)
 	initialPrompt := BuildInitialPrompt(r.prompt, summarizeTurns(record.Turns), question, runtime)
-	result, err := r.runner.RunNew(ctx, workDir, initialPrompt)
+	result, err := r.runner.RunNew(ctx, workDir, model, reasoningEffort, initialPrompt)
 	if err != nil {
 		return "", err
 	}
@@ -111,14 +121,16 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 	}
 
 	record = SessionRecord{
-		ConversationKey: conversationKey,
-		SessionID:       result.SessionID,
-		PromptHash:      r.promptHash,
-		WorkDir:         workDir,
-		EnvironmentHash: envHash,
-		CreatedAt:       now,
-		LastActiveAt:    now,
-		TurnCount:       1,
+		ConversationKey:         conversationKey,
+		SessionID:               result.SessionID,
+		PromptHash:              r.promptHash,
+		WorkDir:                 workDir,
+		EnvironmentHash:         envHash,
+		ModelOverride:           record.ModelOverride,
+		ReasoningEffortOverride: record.ReasoningEffortOverride,
+		CreatedAt:               now,
+		LastActiveAt:            now,
+		TurnCount:               1,
 		Turns: []Turn{{
 			User:      strings.TrimSpace(question),
 			Assistant: strings.TrimSpace(result.Answer),
@@ -135,7 +147,20 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 }
 
 func (r *Responder) Reset(conversationKey string) error {
-	if err := r.store.Delete(conversationKey); err != nil {
+	record, ok := r.store.Get(conversationKey)
+	if !ok {
+		return nil
+	}
+	record.SessionID = ""
+	record.PromptHash = ""
+	record.WorkDir = ""
+	record.EnvironmentHash = ""
+	record.CreatedAt = time.Time{}
+	record.LastActiveAt = time.Time{}
+	record.TurnCount = 0
+	record.Turns = nil
+	record.LastError = ""
+	if err := r.persistConversationRecord(conversationKey, record); err != nil {
 		return usererr.WrapLocalStorage("Agent couldn't reset the local session history. Please retry.", err)
 	}
 	return nil
@@ -194,6 +219,72 @@ func (r *Responder) environmentHashForRuntime(runtime RuntimeContext, workDir st
 		return strings.TrimSpace(runtime.Workspace.EnvironmentHash)
 	}
 	return PromptHash(workDir)
+}
+
+func (r *Responder) availableModelOptions() []ModelOption {
+	if r == nil || r.modelOptions == nil {
+		return nil
+	}
+	return r.modelOptions.List()
+}
+
+func (r *Responder) reasoningOptionsForModel(option *ModelOption) []ReasoningEffortOption {
+	if option != nil && len(option.SupportedReasoningEfforts) > 0 {
+		return cloneReasoningEffortOptions(option.SupportedReasoningEfforts)
+	}
+	return nil
+}
+
+func (r *Responder) validationReasoningOptionsForModel(option *ModelOption) []ReasoningEffortOption {
+	if options := r.reasoningOptionsForModel(option); len(options) > 0 {
+		return options
+	}
+	return cloneReasoningEffortOptions(r.defaultReasoningOptions)
+}
+
+func (r *Responder) defaultReasoningEffortForModel(model string) string {
+	model = strings.TrimSpace(model)
+	if option := findModelOption(r.availableModelOptions(), model); option != nil {
+		if effort := strings.TrimSpace(strings.ToLower(option.DefaultReasoningEffort)); effort != "" {
+			return effort
+		}
+	}
+	return strings.TrimSpace(strings.ToLower(r.defaultReasoningEffort))
+}
+
+func (r *Responder) validateReasoningEffortForModel(model, effort string) error {
+	effort = strings.TrimSpace(strings.ToLower(effort))
+	if effort == "" {
+		return fmt.Errorf("reasoning effort is empty")
+	}
+	options := r.validationReasoningOptionsForModel(findModelOption(r.availableModelOptions(), model))
+	if len(options) == 0 {
+		return nil
+	}
+	for _, option := range options {
+		if strings.TrimSpace(strings.ToLower(option.Effort)) == effort {
+			return nil
+		}
+	}
+	return fmt.Errorf("unsupported reasoning effort: %s (choose one of: %s)", effort, joinReasoningEffortLabels(options))
+}
+
+func defaultReasoningEffortOptions() []ReasoningEffortOption {
+	return []ReasoningEffortOption{
+		{Effort: "low"},
+		{Effort: "medium"},
+		{Effort: "high"},
+		{Effort: "xhigh"},
+	}
+}
+
+func cloneReasoningEffortOptions(options []ReasoningEffortOption) []ReasoningEffortOption {
+	if len(options) == 0 {
+		return nil
+	}
+	cloned := make([]ReasoningEffortOption, len(options))
+	copy(cloned, options)
+	return cloned
 }
 
 func (r *Responder) hydrateInitialRuntime(ctx context.Context, conversationKey string, runtime RuntimeContext) RuntimeContext {
