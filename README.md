@@ -214,9 +214,9 @@ go test ./...
 - [x] support diagnose by clinic link
 - [x] support Feishu rich-text (`post`) plan questions and quote-style refs ([#12](https://github.com/guo-shaoge/askplanner/issues/12))
 - [x] output a markdown file if output too long
-- [ ] error handling: make sure all errors should return to user clearly(like network issue, rate limte ect)
+- [x] error handling: make sure all errors should return to user clearly(like network issue, rate limte ect) (https://github.com/guo-shaoge/askplanner/pull/17)
 - [ ] support process clinic in batch mode
-- [ ] support switch to different release version of tidb repo and tidb-docs repo
+- [x] support switch to different release version of tidb repo and tidb-docs repo (https://github.com/guo-shaoge/askplanner/commit/4e11ec3ac9f319d5bec545eeb0d159a452bf7d56)
 - [ ] support context management
 - [ ] support model management
 - [ ] slow query finder
