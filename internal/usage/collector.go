@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -688,16 +689,25 @@ func readTailLines(path string, tailBytes int64) ([]string, error) {
 		return nil, fmt.Errorf("seek log file: %w", err)
 	}
 
-	scanner := bufio.NewScanner(file)
-	if start > 0 && scanner.Scan() {
-	}
-
 	var lines []string
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+	reader := bufio.NewReader(file)
+	if start > 0 {
+		if _, err := reader.ReadString('\n'); err != nil && err != io.EOF {
+			return nil, fmt.Errorf("skip partial log line: %w", err)
+		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan log file: %w", err)
+	for {
+		line, err := reader.ReadString('\n')
+		line = strings.TrimRight(line, "\r\n")
+		if line != "" {
+			lines = append(lines, line)
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("scan log file: %w", err)
+		}
 	}
 	return lines, nil
 }
