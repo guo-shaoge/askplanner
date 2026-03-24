@@ -330,5 +330,5 @@ func formatAnswerWarning(warning string) string {
 	if warning == "" {
 		return ""
 	}
-	return "**Warning**\n" + warning
+	return "**Warning**:" + warning + "\n\n"
 }
