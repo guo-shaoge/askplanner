@@ -76,13 +76,17 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 		conversationKey, len(strings.TrimSpace(question)), workDir, compactText(envHash, 12), ok)
 
 	canResume, resumeReason := r.canResume(record, now, workDir, envHash)
+	pendingNotice := r.pendingWorkspaceNotice(record, envHash, resumeReason)
 	if ok && canResume {
 		log.Printf("[codex] resume eligible conversation=%s session=%s", conversationKey, record.SessionID)
 		result, err := r.runner.RunResume(ctx, workDir, record.SessionID, BuildResumePrompt(question, runtime))
 		if err == nil {
+			record.UserKey = strings.TrimSpace(runtime.UserKey)
+			record.PendingNotice = nil
 			record.LastActiveAt = now
 			record.TurnCount++
 			record.LastError = ""
+			record.EnvironmentHash = envHash
 			record.appendTurn(question, result.Answer)
 			if err := r.store.Put(record); err != nil {
 				log.Printf("[codex] persist session after resume failed for %s: %v", conversationKey, err)
@@ -112,12 +116,14 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 
 	record = SessionRecord{
 		ConversationKey: conversationKey,
+		UserKey:         strings.TrimSpace(runtime.UserKey),
 		SessionID:       result.SessionID,
 		PromptHash:      r.promptHash,
 		WorkDir:         workDir,
 		EnvironmentHash: envHash,
 		CreatedAt:       now,
 		LastActiveAt:    now,
+		PendingNotice:   nil,
 		TurnCount:       1,
 		Turns: []Turn{{
 			User:      strings.TrimSpace(question),
@@ -131,7 +137,7 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 	}
 	log.Printf("[codex] answer done conversation=%s mode=new session=%s elapsed=%s",
 		conversationKey, result.SessionID, time.Since(start))
-	return result.Answer, nil
+	return prependAnswerWarning(result.Answer, pendingNotice), nil
 }
 
 func (r *Responder) Reset(conversationKey string) error {
@@ -158,6 +164,32 @@ func (r *Responder) ResetByWorkDirPrefix(workDirPrefix string) (int, error) {
 		}
 		return strings.HasPrefix(workDir, cleanPrefix+string(filepath.Separator))
 	})
+}
+
+func (r *Responder) MarkWorkspaceChanged(userKey, sourceConversationKey string, notice WorkspaceSessionNotice) error {
+	userKey = strings.TrimSpace(userKey)
+	sourceConversationKey = strings.TrimSpace(sourceConversationKey)
+	notice.Message = strings.TrimSpace(notice.Message)
+	notice.NewEnvironmentHash = strings.TrimSpace(notice.NewEnvironmentHash)
+	if userKey == "" || sourceConversationKey == "" || notice.Message == "" || notice.NewEnvironmentHash == "" {
+		return nil
+	}
+	if notice.ChangedAt.IsZero() {
+		notice.ChangedAt = time.Now().UTC()
+	}
+	_, err := r.store.UpdateIf(func(record SessionRecord) bool {
+		return sessionRecordUserKey(record) == userKey &&
+			strings.TrimSpace(record.ConversationKey) != sourceConversationKey &&
+			strings.TrimSpace(record.EnvironmentHash) != notice.NewEnvironmentHash
+	}, func(record *SessionRecord) bool {
+		record.PendingNotice = &WorkspaceSessionNotice{
+			Message:            notice.Message,
+			NewEnvironmentHash: notice.NewEnvironmentHash,
+			ChangedAt:          notice.ChangedAt,
+		}
+		return true
+	})
+	return err
 }
 
 func (r *Responder) canResume(record SessionRecord, now time.Time, workDir, envHash string) (bool, string) {
@@ -247,6 +279,48 @@ func appendAnswerWarning(answer, warning string) string {
 	return answer + "\n\nWarning: " + warning
 }
 
+func prependAnswerWarning(answer, warning string) string {
+	answer = strings.TrimSpace(answer)
+	warning = strings.TrimSpace(warning)
+	if warning == "" {
+		return answer
+	}
+	if answer == "" {
+		return "Warning: " + warning
+	}
+	return "Warning: " + warning + "\n\n" + answer
+}
+
 func buildSessionStoreWarning(message string, err error) string {
 	return usererr.OrDefault(usererr.WrapLocalStorage(message, err), message)
+}
+
+func (r *Responder) pendingWorkspaceNotice(record SessionRecord, envHash, resumeReason string) string {
+	if resumeReason != "environment_changed" || record.PendingNotice == nil {
+		return ""
+	}
+	if strings.TrimSpace(record.PendingNotice.NewEnvironmentHash) != strings.TrimSpace(envHash) {
+		return ""
+	}
+	return strings.TrimSpace(record.PendingNotice.Message)
+}
+
+func sessionRecordUserKey(record SessionRecord) string {
+	if userKey := strings.TrimSpace(record.UserKey); userKey != "" {
+		return userKey
+	}
+	return parseConversationUserKey(record.ConversationKey)
+}
+
+func parseConversationUserKey(conversationKey string) string {
+	conversationKey = strings.TrimSpace(conversationKey)
+	if conversationKey == "" {
+		return ""
+	}
+	const marker = ":user:"
+	idx := strings.LastIndex(conversationKey, marker)
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(conversationKey[idx+len(marker):])
 }

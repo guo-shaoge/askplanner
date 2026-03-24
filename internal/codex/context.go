@@ -11,6 +11,9 @@ type RuntimeContext struct {
 	Attachment    AttachmentContext
 	ClinicLibrary *ClinicLibraryContext
 	Clinic        *ClinicContext
+	// UserKey is internal bookkeeping metadata for session management and must
+	// not be rendered into prompts.
+	UserKey string
 	// Thread carries thread-local history for the latest inbound message.
 	// In this project it is typically populated by the Lark relay when the
 	// incoming event has a non-empty Feishu thread_id.

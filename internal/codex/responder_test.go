@@ -185,3 +185,106 @@ func TestAppendAnswerWarning(t *testing.T) {
 		t.Fatalf("appendAnswerWarning() = %q", got)
 	}
 }
+
+func TestResponderMarksWorkspaceChangedForOtherConversations(t *testing.T) {
+	store, err := NewFileSessionStore(t.TempDir() + "/sessions.json")
+	if err != nil {
+		t.Fatalf("NewFileSessionStore returned error: %v", err)
+	}
+
+	responder := &Responder{store: store}
+	now := time.Now().UTC()
+	records := []SessionRecord{
+		{ConversationKey: "lark:chat:oc_1:user:ou_user", EnvironmentHash: "env-old", LastActiveAt: now},
+		{ConversationKey: "lark:chat:oc_2:user:ou_user", UserKey: "ou_user", EnvironmentHash: "env-new", LastActiveAt: now},
+		{ConversationKey: "conv-c", UserKey: "other", EnvironmentHash: "env-old", LastActiveAt: now},
+	}
+	for _, record := range records {
+		if err := store.Put(record); err != nil {
+			t.Fatalf("store.Put returned error: %v", err)
+		}
+	}
+
+	err = responder.MarkWorkspaceChanged("ou_user", "lark:chat:oc_2:user:ou_user", WorkspaceSessionNotice{
+		Message:            "workspace changed",
+		NewEnvironmentHash: "env-new",
+		ChangedAt:          now,
+	})
+	if err != nil {
+		t.Fatalf("MarkWorkspaceChanged returned error: %v", err)
+	}
+
+	record, _ := store.Get("lark:chat:oc_1:user:ou_user")
+	if record.PendingNotice == nil || record.PendingNotice.Message != "workspace changed" {
+		t.Fatalf("conv-a pending notice = %+v", record.PendingNotice)
+	}
+	record, _ = store.Get("lark:chat:oc_2:user:ou_user")
+	if record.PendingNotice != nil {
+		t.Fatalf("conv-b pending notice = %+v, want nil", record.PendingNotice)
+	}
+	record, _ = store.Get("conv-c")
+	if record.PendingNotice != nil {
+		t.Fatalf("conv-c pending notice = %+v, want nil", record.PendingNotice)
+	}
+}
+
+func TestResponderShowsPendingWorkspaceNoticeOnEnvironmentChange(t *testing.T) {
+	store, err := NewFileSessionStore(t.TempDir() + "/sessions.json")
+	if err != nil {
+		t.Fatalf("NewFileSessionStore returned error: %v", err)
+	}
+
+	workDir := t.TempDir()
+	prompt := "base prompt"
+	responder := &Responder{
+		runner:         &fakeRunner{newResult: &RunResult{SessionID: "session-new", Answer: "new answer"}},
+		store:          store,
+		prompt:         prompt,
+		promptHash:     PromptHash(prompt),
+		defaultWorkDir: workDir,
+		maxTurns:       30,
+		sessionTTL:     time.Hour,
+	}
+
+	now := time.Now().UTC()
+	record := SessionRecord{
+		ConversationKey: "conv-env",
+		UserKey:         "ou_user",
+		SessionID:       "session-old",
+		PromptHash:      responder.promptHash,
+		WorkDir:         workDir,
+		EnvironmentHash: "env-old",
+		PendingNotice: &WorkspaceSessionNotice{
+			Message:            "workspace changed",
+			NewEnvironmentHash: "env-new",
+			ChangedAt:          now,
+		},
+		CreatedAt:    now,
+		LastActiveAt: now,
+		TurnCount:    1,
+	}
+	if err := store.Put(record); err != nil {
+		t.Fatalf("store.Put returned error: %v", err)
+	}
+
+	answer, err := responder.AnswerWithContext(context.Background(), "conv-env", "latest question", RuntimeContext{
+		UserKey: "ou_user",
+		Workspace: &WorkspaceContext{
+			RootDir:         workDir,
+			EnvironmentHash: "env-new",
+		},
+	})
+	if err != nil {
+		t.Fatalf("AnswerWithContext returned error: %v", err)
+	}
+	if !strings.HasPrefix(answer, "Warning: workspace changed") {
+		t.Fatalf("answer = %q, want prefixed warning", answer)
+	}
+	record, _ = store.Get("conv-env")
+	if record.PendingNotice != nil {
+		t.Fatalf("pending notice = %+v, want nil", record.PendingNotice)
+	}
+	if record.EnvironmentHash != "env-new" {
+		t.Fatalf("environment hash = %q, want env-new", record.EnvironmentHash)
+	}
+}

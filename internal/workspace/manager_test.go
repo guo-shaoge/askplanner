@@ -44,9 +44,12 @@ func TestEnsureSwitchAndAgentRulesRefresh(t *testing.T) {
 		t.Fatalf("expected user-files symlink: %v", err)
 	}
 
-	switched, err := manager.SwitchRepo(ctx, "ou_test-user", "tidb", "release-8.5")
+	switched, changed, err := manager.SwitchRepo(ctx, "ou_test-user", "tidb", "release-8.5")
 	if err != nil {
 		t.Fatalf("switch repo: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected switch to report environment change")
 	}
 	if switched.EnvironmentHash == ws.EnvironmentHash {
 		t.Fatalf("expected environment hash to change after repo switch")
