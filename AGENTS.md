@@ -62,6 +62,7 @@ Codex CLI `WorkDir` = project root, so it reads `contrib/` via shell commands (`
 ```bash
 make all          # bin/askplanner_cli + bin/askplanner_larkbot
 make larkbot      # larkbot only
+make fmt          # go fmt ./...
 make lint         # run golangci-lint with the pinned repo version
 ```
 
@@ -286,4 +287,4 @@ Answer: read from reply file (`-o`), fallback to `final_answer` in JSON stdout.
 - Module: `lab/askplanner`
 - Standard `log` package, env-var-only config, no external deps beyond Lark SDK
 - All paths relative to project root
-- Keep the Go tree `gofmt`-formatted and `make lint` clean before finishing changes
+- Before finishing changes, run `make fmt` and keep `make lint` clean
