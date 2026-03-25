@@ -46,6 +46,7 @@ func BuildInitialPrompt(normalizedPrompt, summary, question string, runtime Runt
 	sb.WriteString("- You are serving a TiDB query tuning chat relay backed by Codex CLI.\n")
 	sb.WriteString("- Answer the user's latest message directly.\n")
 	writeWorkspaceContext(&sb, runtime.Workspace)
+	writeThreadContext(&sb, runtime.Thread)
 	writeAttachmentContext(&sb, runtime.Attachment)
 	writeClinicLibraryContext(&sb, runtime.ClinicLibrary)
 	writeClinicContext(&sb, runtime.Clinic)
@@ -71,6 +72,74 @@ func BuildResumePrompt(question string, runtime RuntimeContext) string {
 	sb.WriteString(strings.TrimSpace(question))
 	sb.WriteByte('\n')
 	return sb.String()
+}
+
+func writeThreadContext(sb *strings.Builder, thread *ThreadContext) {
+	if thread == nil || strings.TrimSpace(thread.ThreadID) == "" {
+		return
+	}
+
+	sb.WriteString("- New-session Feishu thread context: thread_id=")
+	sb.WriteString(strings.TrimSpace(thread.ThreadID))
+	sb.WriteString("\n")
+	sb.WriteString("- Use earlier thread messages below as context, but prioritize the latest user message.\n")
+	if v := strings.TrimSpace(thread.RootMessageID); v != "" {
+		sb.WriteString("- root_message_id=")
+		sb.WriteString(v)
+		sb.WriteString("\n")
+	}
+	if v := strings.TrimSpace(thread.ParentMessageID); v != "" {
+		sb.WriteString("- parent_message_id=")
+		sb.WriteString(v)
+		sb.WriteString("\n")
+	}
+	if thread.OmittedCount > 0 {
+		fmt.Fprintf(sb, "- At least %d older thread messages omitted.\n", thread.OmittedCount)
+	}
+	if len(thread.Messages) == 0 {
+		sb.WriteString("- Earlier thread messages: none.\n")
+		return
+	}
+
+	sb.WriteString("- Earlier thread messages (oldest first):\n")
+	for _, msg := range thread.Messages {
+		sb.WriteString("  - ")
+		if !msg.CreatedAt.IsZero() {
+			sb.WriteString("at=")
+			sb.WriteString(msg.CreatedAt.Format(time.RFC3339))
+			sb.WriteByte(' ')
+		}
+		if v := strings.TrimSpace(msg.SenderLabel); v != "" {
+			sb.WriteString("sender=")
+			sb.WriteString(v)
+			sb.WriteByte(' ')
+		}
+		if v := strings.TrimSpace(msg.MessageType); v != "" {
+			sb.WriteString("type=")
+			sb.WriteString(v)
+			sb.WriteByte(' ')
+		}
+		if v := strings.TrimSpace(msg.MessageID); v != "" {
+			sb.WriteString("message_id=")
+			sb.WriteString(v)
+		}
+		sb.WriteByte('\n')
+		sb.WriteString("    content:\n")
+		writeIndentedBlock(sb, msg.Content, "      ")
+	}
+}
+
+func writeIndentedBlock(sb *strings.Builder, content, indent string) {
+	if strings.TrimSpace(content) == "" {
+		sb.WriteString(indent)
+		sb.WriteString("(empty)\n")
+		return
+	}
+	for _, line := range strings.Split(content, "\n") {
+		sb.WriteString(indent)
+		sb.WriteString(line)
+		sb.WriteByte('\n')
+	}
 }
 
 func writeWorkspaceContext(sb *strings.Builder, workspace *WorkspaceContext) {

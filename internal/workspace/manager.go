@@ -158,7 +158,7 @@ func (m *Manager) Status(ctx context.Context, userKey string) (*Workspace, error
 	return m.Ensure(ctx, userKey)
 }
 
-func (m *Manager) SwitchRepo(ctx context.Context, userKey, repoName, ref string) (*Workspace, error) {
+func (m *Manager) SwitchRepo(ctx context.Context, userKey, repoName, ref string) (*Workspace, bool, error) {
 	start := time.Now()
 	log.Printf("[workspace] switch start user=%s repo=%s ref=%s", sanitizePathSegment(userKey, ""), repoName, ref)
 	defer func() {
@@ -166,15 +166,15 @@ func (m *Manager) SwitchRepo(ctx context.Context, userKey, repoName, ref string)
 	}()
 	spec, ok := m.repos[repoName]
 	if !ok {
-		return nil, fmt.Errorf("unsupported workspace repo: %s", repoName)
+		return nil, false, fmt.Errorf("unsupported workspace repo: %s", repoName)
 	}
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
-		return nil, fmt.Errorf("workspace ref is empty")
+		return nil, false, fmt.Errorf("workspace ref is empty")
 	}
 	lock, userKey, err := m.lockUser(userKey, false)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer func() {
 		_ = lock.Close()
@@ -182,14 +182,15 @@ func (m *Manager) SwitchRepo(ctx context.Context, userKey, repoName, ref string)
 
 	meta, dirs, err := m.ensureMetadata(userKey)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	prevEnvHash := strings.TrimSpace(meta.EnvironmentHash)
 	if err := m.fetchMirror(ctx, spec); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	sha, err := m.resolveRef(ctx, spec, ref)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	state := meta.reposForUpdate(spec)
 	state.RequestedRef = ref
@@ -197,7 +198,7 @@ func (m *Manager) SwitchRepo(ctx context.Context, userKey, repoName, ref string)
 	state.TrackingLatest = spec.TrackLatest && ref == spec.DefaultRef
 	state.LastSyncedAt = time.Now().UTC()
 	if err := m.ensureCheckout(ctx, spec, dirs.rootDir, sha); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if repoName == "tidb" {
@@ -205,7 +206,7 @@ func (m *Manager) SwitchRepo(ctx context.Context, userKey, repoName, ref string)
 		docsState := meta.reposForUpdate(docsSpec)
 		docsRef := docsSpec.DefaultRef
 		if err := m.fetchMirror(ctx, docsSpec); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if !isLikelyCommitSHA(ref) {
 			if _, err := m.resolveRef(ctx, docsSpec, ref); err == nil {
@@ -214,21 +215,25 @@ func (m *Manager) SwitchRepo(ctx context.Context, userKey, repoName, ref string)
 		}
 		docsSHA, err := m.resolveRef(ctx, docsSpec, docsRef)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		docsState.RequestedRef = docsRef
 		docsState.ResolvedSHA = docsSHA
 		docsState.TrackingLatest = false
 		docsState.LastSyncedAt = time.Now().UTC()
 		if err := m.ensureCheckout(ctx, docsSpec, dirs.rootDir, docsSHA); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 
-	return m.finalizeLocked(meta, dirs)
+	ws, err := m.finalizeLocked(meta, dirs)
+	if err != nil {
+		return nil, false, err
+	}
+	return ws, prevEnvHash != strings.TrimSpace(ws.EnvironmentHash), nil
 }
 
-func (m *Manager) Sync(ctx context.Context, userKey, repoName string) (*Workspace, error) {
+func (m *Manager) Sync(ctx context.Context, userKey, repoName string) (*Workspace, bool, error) {
 	start := time.Now()
 	log.Printf("[workspace] sync start user=%s repo=%s", sanitizePathSegment(userKey, ""), repoName)
 	defer func() {
@@ -236,7 +241,7 @@ func (m *Manager) Sync(ctx context.Context, userKey, repoName string) (*Workspac
 	}()
 	lock, userKey, err := m.lockUser(userKey, false)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer func() {
 		_ = lock.Close()
@@ -244,18 +249,19 @@ func (m *Manager) Sync(ctx context.Context, userKey, repoName string) (*Workspac
 
 	meta, dirs, err := m.ensureMetadata(userKey)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	prevEnvHash := strings.TrimSpace(meta.EnvironmentHash)
 
 	targets := m.syncTargets(repoName)
 	if len(targets) == 0 {
-		return nil, fmt.Errorf("unsupported workspace repo: %s", repoName)
+		return nil, false, fmt.Errorf("unsupported workspace repo: %s", repoName)
 	}
 
 	now := time.Now().UTC()
 	for _, spec := range targets {
 		if err := m.fetchMirror(ctx, spec); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		state := meta.reposForUpdate(spec)
 		requestedRef := strings.TrimSpace(state.RequestedRef)
@@ -264,7 +270,7 @@ func (m *Manager) Sync(ctx context.Context, userKey, repoName string) (*Workspac
 		}
 		sha, err := m.resolveRef(ctx, spec, requestedRef)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		state.RequestedRef = requestedRef
 		state.ResolvedSHA = sha
@@ -273,14 +279,18 @@ func (m *Manager) Sync(ctx context.Context, userKey, repoName string) (*Workspac
 			state.TrackingLatest = true
 		}
 		if err := m.ensureCheckout(ctx, spec, dirs.rootDir, sha); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 
-	return m.finalizeLocked(meta, dirs)
+	ws, err := m.finalizeLocked(meta, dirs)
+	if err != nil {
+		return nil, false, err
+	}
+	return ws, prevEnvHash != strings.TrimSpace(ws.EnvironmentHash), nil
 }
 
-func (m *Manager) Reset(ctx context.Context, userKey, repoName string) (*Workspace, error) {
+func (m *Manager) Reset(ctx context.Context, userKey, repoName string) (*Workspace, bool, error) {
 	start := time.Now()
 	log.Printf("[workspace] reset start user=%s repo=%s", sanitizePathSegment(userKey, ""), repoName)
 	defer func() {
@@ -288,7 +298,7 @@ func (m *Manager) Reset(ctx context.Context, userKey, repoName string) (*Workspa
 	}()
 	lock, userKey, err := m.lockUser(userKey, false)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer func() {
 		_ = lock.Close()
@@ -296,34 +306,39 @@ func (m *Manager) Reset(ctx context.Context, userKey, repoName string) (*Workspa
 
 	meta, dirs, err := m.ensureMetadata(userKey)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	prevEnvHash := strings.TrimSpace(meta.EnvironmentHash)
 
 	targets := m.syncTargets(repoName)
 	if len(targets) == 0 {
-		return nil, fmt.Errorf("unsupported workspace repo: %s", repoName)
+		return nil, false, fmt.Errorf("unsupported workspace repo: %s", repoName)
 	}
 
 	now := time.Now().UTC()
 	for _, spec := range targets {
 		if err := m.fetchMirror(ctx, spec); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		state := meta.reposForUpdate(spec)
 		sha, err := m.resolveRef(ctx, spec, spec.DefaultRef)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		state.RequestedRef = spec.DefaultRef
 		state.ResolvedSHA = sha
 		state.TrackingLatest = spec.TrackLatest
 		state.LastSyncedAt = now
 		if err := m.ensureCheckout(ctx, spec, dirs.rootDir, sha); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 
-	return m.finalizeLocked(meta, dirs)
+	ws, err := m.finalizeLocked(meta, dirs)
+	if err != nil {
+		return nil, false, err
+	}
+	return ws, prevEnvHash != strings.TrimSpace(ws.EnvironmentHash), nil
 }
 
 func (m *Manager) MaybeSweep(ctx context.Context) error {

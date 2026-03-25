@@ -1,17 +1,22 @@
 package larkbot
 
 import (
+	"context"
 	"sync"
 	"time"
 
 	"lab/askplanner/internal/codex"
+	"lab/askplanner/internal/modelcmd"
 	"lab/askplanner/internal/workspace"
 )
 
 const (
 	messagePageSize              = 50
 	maxUploadCommandPages        = 20
+	maxThreadContextPages        = 20
 	promptAttachmentSummaryLimit = 20
+	promptThreadMessageLimit     = 20
+	promptThreadContentLimit     = 600
 	typingReactionType           = "Typing"
 	feishuReactionTimeout        = 10 * time.Second
 )
@@ -47,6 +52,9 @@ type preparedReply struct {
 	directReply     string
 	skipCodex       bool
 	attachmentCtx   codex.AttachmentContext
+	threadCtx       *codex.ThreadContext
+	threadCtxLoader func(context.Context) (*codex.ThreadContext, error)
+	modelCmd        *modelcmd.Command
 	workspaceCmd    *workspace.Command
 	conversationKey string
 	userKey         string
@@ -57,6 +65,7 @@ type uploadCommand struct {
 	// empty we only save files and reply with the import summary.
 	count     int
 	remainder string
+	matched   bool
 	ok        bool
 }
 
@@ -77,8 +86,9 @@ type downloadedResource struct {
 }
 
 type replyBody struct {
-	msgType string
-	content string
+	msgType      string
+	content      string
+	fallbackText string
 }
 
 type postMessageContent struct {

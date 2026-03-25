@@ -17,6 +17,8 @@ import (
 	"lab/askplanner/internal/clinic"
 	"lab/askplanner/internal/codex"
 	"lab/askplanner/internal/config"
+	"lab/askplanner/internal/usage"
+	"lab/askplanner/internal/usererr"
 	"lab/askplanner/internal/workspace"
 )
 
@@ -30,6 +32,7 @@ type App struct {
 	prefetcher  *clinic.Prefetcher
 	attachments *attachments.Manager
 	workspace   *workspace.Manager
+	tracker     *usage.QuestionTracker
 	dedup       *messageDedup
 	dedupMaxAge time.Duration
 	bot         botIdentity
@@ -62,6 +65,10 @@ func New(cfg *config.Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build workspace manager: %w", err)
 	}
+	tracker, err := usage.NewQuestionTracker(cfg)
+	if err != nil {
+		log.Printf("[larkbot] usage tracker disabled: %v", err)
+	}
 
 	apiClient := lark.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret, lark.WithLogLevel(larkcore.LogLevelInfo))
 	return &App{
@@ -72,6 +79,7 @@ func New(cfg *config.Config) (*App, error) {
 		prefetcher:  prefetcher,
 		attachments: attachmentManager,
 		workspace:   workspaceManager,
+		tracker:     tracker,
 		dedup:       &messageDedup{},
 		dedupMaxAge: time.Duration(cfg.FeishuDedupTimeoutInMin) * time.Minute,
 		bot:         botIdentity{name: cfg.FeishuBotName},
@@ -140,7 +148,7 @@ func (a *App) newEventHandler() *dispatcher.EventDispatcher {
 				answer, err := a.answerEvent(ctx, event)
 				if err != nil {
 					log.Printf("[larkbot] handle event error: %v (message_id=%s)", err, messageID)
-					answer = "Agent Error: " + err.Error()
+					answer = usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs.")
 				}
 
 				reply, err := buildReplyBody(answer)

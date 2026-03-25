@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"regexp"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"lab/askplanner/internal/clinicstore"
 	"lab/askplanner/internal/codex"
 	"lab/askplanner/internal/config"
+	"lab/askplanner/internal/usererr"
 )
 
 type Prefetcher struct {
@@ -72,18 +74,7 @@ var clinicAnalysisIntentKeywords = []string{
 type EnrichResult struct {
 	RuntimeContext codex.RuntimeContext
 	IntroReply     string
-}
-
-type UserError struct {
-	Message string
-	Cause   error
-}
-
-func (e *UserError) Error() string {
-	if e.Cause == nil {
-		return e.Message
-	}
-	return fmt.Sprintf("%s: %v", e.Message, e.Cause)
+	Warning        string
 }
 
 func NewPrefetcher(cfg *config.Config) (*Prefetcher, error) {
@@ -114,7 +105,7 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 	previousURL := ""
 	runtime, loadErr := p.attachLatestStored(userKey, runtime)
 	if loadErr != nil {
-		return EnrichResult{RuntimeContext: runtime}, loadErr
+		return EnrichResult{RuntimeContext: runtime}, usererr.WrapLocalStorage("Agent couldn't load the saved Clinic snapshots from local storage. Please retry.", loadErr)
 	}
 	if runtime.Clinic != nil {
 		previousURL = strings.TrimSpace(runtime.Clinic.SourceURL)
@@ -123,10 +114,7 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 	spec, matched, err := ParseSlowQueryLink(question)
 	if err != nil {
 		log.Printf("[clinic] parse failed for potential slow query link: %v", err)
-		return EnrichResult{RuntimeContext: runtime}, &UserError{
-			Message: "I detected a Clinic slow query link but could not parse its cluster ID and time range. Please send the full share link from Clinic Slow Query.",
-			Cause:   err,
-		}
+		return EnrichResult{RuntimeContext: runtime}, usererr.Wrap(usererr.KindInvalidInput, "Agent detected a Clinic slow query link but could not parse its cluster ID and time range. Please send the full share link from Clinic Slow Query.", err)
 	}
 	if !matched {
 		return EnrichResult{RuntimeContext: runtime}, nil
@@ -142,22 +130,13 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 	)
 	if strings.TrimSpace(p.client.APIKey) == "" {
 		log.Printf("[clinic] prefetch skipped: CLINIC_API_KEY is empty for cluster_id=%s", spec.ClusterID)
-		return EnrichResult{RuntimeContext: runtime}, &UserError{
-			Message: "Clinic slow query auto-analysis is enabled, but `CLINIC_API_KEY` is not configured.",
-		}
+		return EnrichResult{RuntimeContext: runtime}, usererr.New(usererr.KindConfig, "Clinic slow query auto-analysis is enabled, but `CLINIC_API_KEY` is not configured.")
 	}
 
 	analysis, err := p.client.FetchSlowQueryContext(ctx, *spec)
 	if err != nil {
 		log.Printf("[clinic] prefetch failed for cluster_id=%s url=%s: %v", spec.ClusterID, spec.RawURL, err)
-		msg := "Clinic slow query prefetch failed."
-		if strings.Contains(err.Error(), "auth failed") {
-			msg = "Clinic API authentication failed. Check `CLINIC_API_KEY` and verify the key can access clinic.pingcap.com."
-		}
-		return EnrichResult{RuntimeContext: runtime}, &UserError{
-			Message: msg,
-			Cause:   err,
-		}
+		return EnrichResult{RuntimeContext: runtime}, classifyClinicFetchError(err)
 	}
 	log.Printf("[clinic] prefetch succeeded: cluster_id=%s total_queries=%d unique_digests=%d top_digests=%d",
 		analysis.ClusterID,
@@ -172,15 +151,29 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 		if runtime.ClinicLibrary != nil {
 			runtime.ClinicLibrary.ActiveItemName = ""
 		}
-		return EnrichResult{RuntimeContext: runtime}, nil
+		result := EnrichResult{
+			RuntimeContext: runtime,
+			Warning:        buildClinicPersistenceWarning("Clinic data was fetched, but Agent couldn't save this snapshot locally. Follow-up turns may not be able to reuse it.", storeErr),
+		}
+		if shouldReturnIntroReply(question, previousURL, spec) {
+			result.IntroReply = buildIntroReply(runtime, false)
+		}
+		return result, nil
 	}
 	runtime, err = p.attachLatestStored(userKey, runtime)
 	if err != nil {
-		return EnrichResult{RuntimeContext: runtime}, err
+		result := EnrichResult{
+			RuntimeContext: runtime,
+			Warning:        buildClinicPersistenceWarning("Clinic data was fetched, but Agent couldn't refresh the saved snapshot library locally. Follow-up turns may not be able to reuse it.", err),
+		}
+		if shouldReturnIntroReply(question, previousURL, spec) {
+			result.IntroReply = buildIntroReply(runtime, false)
+		}
+		return result, nil
 	}
 	result := EnrichResult{RuntimeContext: runtime}
 	if shouldReturnIntroReply(question, previousURL, spec) {
-		result.IntroReply = buildIntroReply(runtime)
+		result.IntroReply = buildIntroReply(runtime, true)
 	}
 	return result, nil
 }
@@ -406,21 +399,21 @@ func toClinicRuntimeContext(analysis *AnalysisContext) *codex.ClinicContext {
 }
 
 func UserFacingMessage(err error) string {
-	var userErr *UserError
-	if errors.As(err, &userErr) {
-		return userErr.Message
-	}
-	return ""
+	return usererr.Message(err)
 }
 
-func buildIntroReply(runtime codex.RuntimeContext) string {
+func buildIntroReply(runtime codex.RuntimeContext, saved bool) string {
 	clinic := runtime.Clinic
 	if clinic == nil {
 		return ""
 	}
 
 	var sb strings.Builder
-	sb.WriteString("I saved this Clinic slow query snapshot locally.\n")
+	if saved {
+		sb.WriteString("Agent saved this Clinic slow query snapshot locally.\n")
+	} else {
+		sb.WriteString("Agent fetched this Clinic slow query snapshot for this turn, but couldn't save it locally.\n")
+	}
 	sb.WriteString("- Cluster: ")
 	sb.WriteString(strings.TrimSpace(clinic.ClusterID))
 	if clinic.ClusterName != "" {
@@ -462,11 +455,62 @@ func buildIntroReply(runtime codex.RuntimeContext) string {
 		clinic.Summary.AvgQueryTime,
 		clinic.Summary.MaxQueryTime,
 	)
-	if runtime.ClinicLibrary != nil && runtime.ClinicLibrary.ActiveItemName != "" {
+	if saved && runtime.ClinicLibrary != nil && runtime.ClinicLibrary.ActiveItemName != "" {
 		sb.WriteString("- Saved Entry: ")
 		sb.WriteString(runtime.ClinicLibrary.ActiveItemName)
 		sb.WriteByte('\n')
 	}
 	sb.WriteString("Tell me what you want to do next with this slow query, for example: root-cause analysis, plan interpretation, bottleneck summary, or optimization suggestions.")
 	return sb.String()
+}
+
+func buildClinicPersistenceWarning(message string, err error) string {
+	classified := usererr.WrapLocalStorage(message, err)
+	warning := usererr.OrDefault(classified, message)
+	if !strings.Contains(strings.ToLower(warning), "follow-up") {
+		warning += " Follow-up turns may not be able to reuse it."
+	}
+	return warning
+}
+
+func classifyClinicFetchError(err error) error {
+	if msg := usererr.Message(err); msg != "" {
+		return err
+	}
+	lower := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(lower, "auth failed"):
+		return usererr.Wrap(usererr.KindAuth, "Clinic API authentication failed. Check `CLINIC_API_KEY` and verify the key can access clinic.pingcap.com.", err)
+	case strings.Contains(lower, "cluster not found"):
+		return usererr.Wrap(usererr.KindInvalidInput, "The Clinic link points to a cluster that is not accessible with the current API key.", err)
+	case containsClinicErrorText(lower, "status 429", "too many requests", "rate limit"):
+		return usererr.Wrap(usererr.KindRateLimit, "Clinic is rate-limiting requests right now. Please retry in a moment.", err)
+	case errors.Is(err, context.DeadlineExceeded), hasNetTimeout(err), containsClinicErrorText(lower, "timeout", "timed out", "deadline exceeded"):
+		return usererr.Wrap(usererr.KindTimeout, "Clinic slow query fetch timed out. Please retry.", err)
+	case hasNetworkError(err), containsClinicErrorText(lower, "dial tcp", "connection refused", "connection reset", "no such host", "network is unreachable", "temporary failure in name resolution"):
+		return usererr.Wrap(usererr.KindNetwork, "Clinic could not be reached because of a network problem. Please retry.", err)
+	case containsClinicErrorText(lower, "status 500", "status 502", "status 503", "status 504"):
+		return usererr.Wrap(usererr.KindUnavailable, "Clinic is temporarily unavailable. Please retry.", err)
+	default:
+		return usererr.Wrap(usererr.KindUnavailable, "Clinic slow query prefetch failed. Please retry.", err)
+	}
+}
+
+func containsClinicErrorText(s string, parts ...string) bool {
+	for _, part := range parts {
+		if strings.Contains(s, part) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNetTimeout(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func hasNetworkError(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }

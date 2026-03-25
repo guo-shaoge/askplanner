@@ -1,15 +1,14 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 
 	"lab/askplanner/internal/config"
-	botapp "lab/askplanner/internal/larkbot"
+	"lab/askplanner/internal/usage"
 )
 
 func main() {
@@ -26,16 +25,22 @@ func main() {
 		_ = logFile.Close()
 	}()
 
-	if _, err := exec.LookPath(cfg.CodexBin); err != nil {
-		fatalStartup("locate Codex CLI", err, fmt.Sprintf("Install Codex CLI or point CODEX_BIN to a valid executable. Current value: %s", cfg.CodexBin))
+	collector, err := usage.NewCollector(cfg)
+	if err != nil {
+		fatalStartup("build usage collector", err)
+	}
+	server, err := usage.NewServer(collector)
+	if err != nil {
+		fatalStartup("build usage dashboard", err)
 	}
 
-	app, err := botapp.New(cfg)
-	if err != nil {
-		fatalStartup("build larkbot app", err, "Check FEISHU_APP_ID/FEISHU_APP_SECRET, FEISHU_FILE_DIR, and any local storage paths used by attachments or Clinic snapshots.")
+	addr := strings.TrimSpace(cfg.UsageHTTPAddr)
+	if addr == "" {
+		addr = "127.0.0.1:18080"
 	}
-	if err := app.Run(context.Background()); err != nil {
-		fatalStartup("start lark websocket client", err, "Check FEISHU_APP_ID/FEISHU_APP_SECRET and verify outbound network access to Feishu.")
+	log.Printf("[usage] dashboard listening on http://%s", addr)
+	if err := http.ListenAndServe(addr, server.Handler()); err != nil {
+		fatalStartup("start usage dashboard", err, "Check USAGE_HTTP_ADDR and whether the port is already in use.")
 	}
 }
 
