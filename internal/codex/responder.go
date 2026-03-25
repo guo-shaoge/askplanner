@@ -129,6 +129,30 @@ func (r *Responder) Reset(conversationKey string) error {
 	return r.store.Delete(conversationKey)
 }
 
+// ResolveExistingConversationKey returns the preferred key when it already has
+// a stored session; otherwise it returns the first fallback candidate that
+// already exists. The caller decides whether that fallback means "legacy".
+func (r *Responder) ResolveExistingConversationKey(preferred string, candidates ...string) (string, bool) {
+	preferred = strings.TrimSpace(preferred)
+	if preferred == "" {
+		return preferred, false
+	}
+	if _, ok := r.store.Get(preferred); ok {
+		return preferred, false
+	}
+
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || candidate == preferred {
+			continue
+		}
+		if _, ok := r.store.Get(candidate); ok {
+			return candidate, true
+		}
+	}
+	return preferred, false
+}
+
 func (r *Responder) ResetByWorkDirPrefix(workDirPrefix string) (int, error) {
 	workDirPrefix = strings.TrimSpace(workDirPrefix)
 	if workDirPrefix == "" {

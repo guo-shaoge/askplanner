@@ -3,6 +3,7 @@ package larkbot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -10,6 +11,28 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
+
+const (
+	replyErrThreadUnsupported = 230071
+	replyErrAggregatedThread  = 230072
+)
+
+type replyOptions struct {
+	preferThread bool
+}
+
+type replyAPIError struct {
+	code int
+	msg  string
+}
+
+func (e *replyAPIError) Error() string {
+	return fmt.Sprintf("reply API error: code=%d, msg=%s", e.code, e.msg)
+}
+
+func (e *replyAPIError) allowsThreadFallback() bool {
+	return e.code == replyErrThreadUnsupported || e.code == replyErrAggregatedThread
+}
 
 // buildReplyBody always renders a post+markdown payload so the bot can send
 // code fences, links, and richer formatting without switching message types.
@@ -108,23 +131,41 @@ func deleteMessageReaction(ctx context.Context, apiClient *lark.Client, messageI
 	return nil
 }
 
-func replyMessage(ctx context.Context, apiClient *lark.Client, messageID string, body replyBody) error {
-	log.Printf("[larkbot] replying to message_id=%s", messageID)
+func replyMessage(ctx context.Context, apiClient *lark.Client, messageID string, body replyBody, opts replyOptions) error {
+	log.Printf("[larkbot] replying to message_id=%s prefer_thread=%t", messageID, opts.preferThread)
+	err := sendReplyMessage(ctx, apiClient, messageID, body, opts.preferThread)
+	var apiErr *replyAPIError
+	if opts.preferThread && errors.As(err, &apiErr) && apiErr.allowsThreadFallback() {
+		log.Printf("[larkbot] thread reply unavailable for message_id=%s code=%d, retrying without thread",
+			messageID, apiErr.code)
+		return sendReplyMessage(ctx, apiClient, messageID, body, false)
+	}
+	if err != nil {
+		return err
+	}
+	log.Printf("[larkbot] reply sent (message_id=%s)", messageID)
+	return nil
+}
+
+func sendReplyMessage(ctx context.Context, apiClient *lark.Client, messageID string, body replyBody, replyInThread bool) error {
+	bodyBuilder := larkim.NewReplyMessageReqBodyBuilder().
+		MsgType(body.msgType).
+		Content(body.content).
+		Uuid("reply-" + messageID)
+	if replyInThread {
+		bodyBuilder = bodyBuilder.ReplyInThread(true)
+	}
+
 	resp, err := apiClient.Im.V1.Message.Reply(ctx,
 		larkim.NewReplyMessageReqBuilder().
 			MessageId(messageID).
-			Body(larkim.NewReplyMessageReqBodyBuilder().
-				MsgType(body.msgType).
-				Content(body.content).
-				Uuid("reply-"+messageID).
-				Build()).
+			Body(bodyBuilder.Build()).
 			Build())
 	if err != nil {
 		return fmt.Errorf("call reply API: %w", err)
 	}
 	if !resp.Success() {
-		return fmt.Errorf("reply API error: code=%d, msg=%s", resp.Code, resp.Msg)
+		return &replyAPIError{code: resp.Code, msg: resp.Msg}
 	}
-	log.Printf("[larkbot] reply sent (message_id=%s)", messageID)
 	return nil
 }

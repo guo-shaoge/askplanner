@@ -224,6 +224,91 @@ func TestBuildReplyBodyNormalizesEmptyText(t *testing.T) {
 	}
 }
 
+func TestReplyMessageUsesThreadReplyWhenRequested(t *testing.T) {
+	var replyInThread *bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":0,"msg":"success","expire":7200,"tenant_access_token":"tenant-token"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/open-apis/im/v1/messages/om_message/reply":
+			var payload struct {
+				ReplyInThread *bool `json:"reply_in_thread"`
+			}
+			if err := readJSONBody(r, &payload); err != nil {
+				t.Fatalf("read reply request body: %v", err)
+			}
+			replyInThread = payload.ReplyInThread
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":0,"msg":"success","data":{"message_id":"om_reply","thread_id":"omt_thread"}}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	apiClient := lark.NewClient("cli_d", "secret", lark.WithOpenBaseUrl(server.URL), lark.WithEnableTokenCache(false))
+	err := replyMessage(context.Background(), apiClient, "om_message", replyBody{
+		msgType: "post",
+		content: `{"zh_cn":{"content":[[{"tag":"md","text":"hello"}]]}}`,
+	}, replyOptions{preferThread: true})
+	if err != nil {
+		t.Fatalf("replyMessage returned error: %v", err)
+	}
+	if replyInThread == nil || !*replyInThread {
+		t.Fatalf("expected reply_in_thread=true, got %+v", replyInThread)
+	}
+}
+
+func TestReplyMessageFallsBackWhenThreadReplyUnsupported(t *testing.T) {
+	var replyFlags []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":0,"msg":"success","expire":7200,"tenant_access_token":"tenant-token"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/open-apis/im/v1/messages/om_message/reply":
+			var payload struct {
+				ReplyInThread *bool `json:"reply_in_thread"`
+			}
+			if err := readJSONBody(r, &payload); err != nil {
+				t.Fatalf("read reply request body: %v", err)
+			}
+			if payload.ReplyInThread == nil {
+				replyFlags = append(replyFlags, "unset")
+			} else if *payload.ReplyInThread {
+				replyFlags = append(replyFlags, "true")
+			} else {
+				replyFlags = append(replyFlags, "false")
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			if len(replyFlags) == 1 {
+				_, _ = w.Write([]byte(`{"code":230071,"msg":"thread reply unsupported"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"code":0,"msg":"success","data":{"message_id":"om_reply"}}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	apiClient := lark.NewClient("cli_e", "secret", lark.WithOpenBaseUrl(server.URL), lark.WithEnableTokenCache(false))
+	err := replyMessage(context.Background(), apiClient, "om_message", replyBody{
+		msgType: "post",
+		content: `{"zh_cn":{"content":[[{"tag":"md","text":"hello"}]]}}`,
+	}, replyOptions{preferThread: true})
+	if err != nil {
+		t.Fatalf("replyMessage returned error: %v", err)
+	}
+	if got := strings.Join(replyFlags, ","); got != "true,unset" {
+		t.Fatalf("reply flags = %q, want true,unset", got)
+	}
+}
+
 func readJSONBody(r *http.Request, dst any) error {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

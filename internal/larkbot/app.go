@@ -137,7 +137,7 @@ func (a *App) newEventHandler() *dispatcher.EventDispatcher {
 			// Keep the SDK callback small: convert every accepted message into the
 			// same answer pipeline and always reply from one place.
 			return withTypingReaction(ctx, a.apiClient, messageID, func() error {
-				answer, err := a.answerEvent(ctx, event)
+				answer, replyOpts, err := a.answerEvent(ctx, event)
 				if err != nil {
 					log.Printf("[larkbot] handle event error: %v (message_id=%s)", err, messageID)
 					answer = "Agent Error: " + err.Error()
@@ -147,7 +147,7 @@ func (a *App) newEventHandler() *dispatcher.EventDispatcher {
 				if err != nil {
 					return fmt.Errorf("build reply body: %w", err)
 				}
-				if err := replyMessage(ctx, a.apiClient, messageID, reply); err != nil {
+				if err := replyMessage(ctx, a.apiClient, messageID, reply, replyOpts); err != nil {
 					return fmt.Errorf("reply message: %w", err)
 				}
 				return nil
