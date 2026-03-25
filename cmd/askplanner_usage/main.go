@@ -21,7 +21,9 @@ func main() {
 	if err != nil {
 		fatalStartup("setup logging", err, "Check LOG_FILE and make sure the target directory is writable.")
 	}
-	defer logFile.Close()
+	defer func() {
+		_ = logFile.Close()
+	}()
 
 	collector, err := usage.NewCollector(cfg)
 	if err != nil {

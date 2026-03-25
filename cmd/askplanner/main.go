@@ -32,7 +32,9 @@ func main() {
 	if err != nil {
 		fatalStartup("setup logging", err, "Check LOG_FILE and make sure the target directory is writable.")
 	}
-	defer logFile.Close()
+	defer func() {
+		_ = logFile.Close()
+	}()
 	if _, err := exec.LookPath(cfg.CodexBin); err != nil {
 		fatalStartup("locate Codex CLI", err, fmt.Sprintf("Install Codex CLI or point CODEX_BIN to a valid executable. Current value: %s", cfg.CodexBin))
 	}

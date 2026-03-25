@@ -85,7 +85,7 @@ func addTypingReaction(ctx context.Context, apiClient *lark.Client, messageID st
 	reactionCtx, cancel := context.WithTimeout(ctx, feishuReactionTimeout)
 	defer cancel()
 
-	resp, err := apiClient.Im.V1.MessageReaction.Create(reactionCtx,
+	resp, err := apiClient.Im.MessageReaction.Create(reactionCtx,
 		larkim.NewCreateMessageReactionReqBuilder().
 			MessageId(messageID).
 			Body(larkim.NewCreateMessageReactionReqBodyBuilder().
@@ -114,7 +114,7 @@ func addTypingReaction(ctx context.Context, apiClient *lark.Client, messageID st
 }
 
 func deleteMessageReaction(ctx context.Context, apiClient *lark.Client, messageID, reactionID string) error {
-	resp, err := apiClient.Im.V1.MessageReaction.Delete(ctx,
+	resp, err := apiClient.Im.MessageReaction.Delete(ctx,
 		larkim.NewDeleteMessageReactionReqBuilder().
 			MessageId(messageID).
 			ReactionId(reactionID).
@@ -151,7 +151,7 @@ func replyMessage(ctx context.Context, apiClient *lark.Client, messageID string,
 
 func replyMessageOnce(ctx context.Context, apiClient *lark.Client, messageID string, body replyBody, uuid string) error {
 	log.Printf("[larkbot] replying to message_id=%s", messageID)
-	resp, err := apiClient.Im.V1.Message.Reply(ctx,
+	resp, err := apiClient.Im.Message.Reply(ctx,
 		larkim.NewReplyMessageReqBuilder().
 			MessageId(messageID).
 			Body(larkim.NewReplyMessageReqBodyBuilder().

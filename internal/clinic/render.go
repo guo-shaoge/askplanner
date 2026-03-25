@@ -59,11 +59,11 @@ func BuildStoredSummary(analysis *AnalysisContext) string {
 		}
 		sb.WriteByte('\n')
 	}
-	sb.WriteString(fmt.Sprintf("- Summary: total_queries=%d avg_query_time_sec=%.6f max_query_time_sec=%.6f\n",
+	_, _ = fmt.Fprintf(&sb, "- Summary: total_queries=%d avg_query_time_sec=%.6f max_query_time_sec=%.6f\n",
 		analysis.Summary.TotalQueries,
 		analysis.Summary.AvgQueryTime,
 		analysis.Summary.MaxQueryTime,
-	))
+	)
 	if analysis.NoRows {
 		sb.WriteString("- No slow query rows were returned for this Clinic scope.\n")
 		return sb.String()
@@ -73,7 +73,7 @@ func BuildStoredSummary(analysis *AnalysisContext) string {
 		sb.WriteString("\n## Detail Rows\n\n")
 		for _, row := range analysis.DetailRows {
 			sb.WriteString("- ")
-			sb.WriteString(fmt.Sprintf("time_unix=%.6f query_time_sec=%.6f", row.TimeUnix, row.QueryTime))
+			_, _ = fmt.Fprintf(&sb, "time_unix=%.6f query_time_sec=%.6f", row.TimeUnix, row.QueryTime)
 			if row.Digest != "" {
 				sb.WriteString(" digest=")
 				sb.WriteString(row.Digest)
@@ -123,11 +123,11 @@ func BuildStoredSummary(analysis *AnalysisContext) string {
 	for _, item := range analysis.TopDigests {
 		sb.WriteString("- digest=")
 		sb.WriteString(item.Digest)
-		sb.WriteString(fmt.Sprintf(" exec_count=%d avg_sec=%.6f max_sec=%.6f",
+		_, _ = fmt.Fprintf(&sb, " exec_count=%d avg_sec=%.6f max_sec=%.6f",
 			item.ExecutionCount,
 			item.AvgQueryTime,
 			item.MaxQueryTime,
-		))
+		)
 		if item.PlanDigest != "" {
 			sb.WriteString(" plan_digest=")
 			sb.WriteString(item.PlanDigest)

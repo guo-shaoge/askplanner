@@ -315,7 +315,7 @@ func (c *Client) runDataProxyQuery(ctx context.Context, clusterID, sql string) (
 
 func (c *Client) doJSON(ctx context.Context, method, endpoint string, params url.Values, body any, out any) error {
 	if strings.TrimSpace(c.APIKey) == "" {
-		return fmt.Errorf("Clinic API key is empty")
+		return fmt.Errorf("clinic API key is empty")
 	}
 
 	if len(params) > 0 {
@@ -344,17 +344,19 @@ func (c *Client) doJSON(ctx context.Context, method, endpoint string, params url
 	if err != nil {
 		return fmt.Errorf("call Clinic API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("read Clinic response: %w", err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("Clinic API auth failed: status %d", resp.StatusCode)
+		return fmt.Errorf("clinic API auth failed: status %d", resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("Clinic API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+		return fmt.Errorf("clinic API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
 	}
 	if err := json.Unmarshal(bodyBytes, out); err != nil {
 		return fmt.Errorf("decode Clinic response: %w", err)
@@ -500,10 +502,10 @@ func stringValue(v any) string {
 		return ""
 	case string:
 		return strings.TrimSpace(x)
-	case fmt.Stringer:
-		return strings.TrimSpace(x.String())
 	case json.Number:
 		return x.String()
+	case fmt.Stringer:
+		return strings.TrimSpace(x.String())
 	case float64:
 		return strconv.FormatFloat(x, 'f', -1, 64)
 	case float32:

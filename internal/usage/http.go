@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"net/url"
 	"strings"
 )
 
@@ -110,17 +109,6 @@ func writeJSON(w http.ResponseWriter, value any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(value)
-}
-
-func questionsURL(userKey string) string {
-	values := url.Values{}
-	if strings.TrimSpace(userKey) != "" {
-		values.Set("user_key", userKey)
-	}
-	if encoded := values.Encode(); encoded != "" {
-		return "/questions?" + encoded
-	}
-	return "/questions"
 }
 
 const sharedStyle = `
