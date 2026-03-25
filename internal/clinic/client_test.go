@@ -39,17 +39,23 @@ func TestFetchSlowQueryContext(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/clinic/api/v1/dashboard/clusters":
-			io.WriteString(w, `{"items":[{"clusterID":"123","clusterName":"prod-a","tenantName":"Acme","clusterDeployTypeV2":"premium"}]}`)
+			if _, err := io.WriteString(w, `{"items":[{"clusterID":"123","clusterName":"prod-a","tenantName":"Acme","clusterDeployTypeV2":"premium"}]}`); err != nil {
+				t.Fatalf("write clusters response: %v", err)
+			}
 		case r.Method == http.MethodPost && r.URL.Path == "/data-proxy/query":
 			body, _ := io.ReadAll(r.Body)
 			var payload map[string]any
 			_ = json.Unmarshal(body, &payload)
 			sql, _ := payload["sql"].(string)
 			if strings.Contains(sql, "COUNT(*) AS total_queries") {
-				io.WriteString(w, `{"columns":["total_queries","avg_query_time","max_query_time"],"rows":[[24,1.25,7.5]]}`)
+				if _, err := io.WriteString(w, `{"columns":["total_queries","avg_query_time","max_query_time"],"rows":[[24,1.25,7.5]]}`); err != nil {
+					t.Fatalf("write summary response: %v", err)
+				}
 				return
 			}
-			io.WriteString(w, `{"columns":["digest","exec_count","avg_query_time","max_query_time","max_result_rows","max_mem_bytes","max_disk_bytes","sample_db","sample_instance","sample_indexes","sample_plan_digest","sample_prev_stmt","sample_plan","sample_decoded_plan","sample_binary_plan","sample_sql"],"rows":[["digest-1",12,1.2,7.5,10,2048,0,"app","tidb-0","idx_a","plan-digest-1","set tidb_mem_quota_query=1073741824","IndexLookUp_1 root 10.00","IndexLookUp(Build) -> TableRowIDScan(Probe)","binary-plan-text","select * from t where a = 1"]]}`)
+			if _, err := io.WriteString(w, `{"columns":["digest","exec_count","avg_query_time","max_query_time","max_result_rows","max_mem_bytes","max_disk_bytes","sample_db","sample_instance","sample_indexes","sample_plan_digest","sample_prev_stmt","sample_plan","sample_decoded_plan","sample_binary_plan","sample_sql"],"rows":[["digest-1",12,1.2,7.5,10,2048,0,"app","tidb-0","idx_a","plan-digest-1","set tidb_mem_quota_query=1073741824","IndexLookUp_1 root 10.00","IndexLookUp(Build) -> TableRowIDScan(Probe)","binary-plan-text","select * from t where a = 1"]]}`); err != nil {
+				t.Fatalf("write digest response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -87,7 +93,9 @@ func TestFetchSlowQueryContextForDetailQuery(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/clinic/api/v1/dashboard/clusters":
-			io.WriteString(w, `{"items":[{"clusterID":"123","clusterName":"prod-a","tenantName":"Acme","clusterDeployTypeV2":"premium"}]}`)
+			if _, err := io.WriteString(w, `{"items":[{"clusterID":"123","clusterName":"prod-a","tenantName":"Acme","clusterDeployTypeV2":"premium"}]}`); err != nil {
+				t.Fatalf("write clusters response: %v", err)
+			}
 		case r.Method == http.MethodPost && r.URL.Path == "/data-proxy/query":
 			body, _ := io.ReadAll(r.Body)
 			var payload map[string]any
@@ -96,7 +104,9 @@ func TestFetchSlowQueryContextForDetailQuery(t *testing.T) {
 			if !strings.Contains(sql, "ORDER BY time DESC") {
 				t.Fatalf("expected detail SQL, got %s", sql)
 			}
-			io.WriteString(w, `{"columns":["time","digest","plan_digest","query_time","parse_time","compile_time","cop_time","process_time","wait_time","total_keys","process_keys","result_rows","mem_max","disk_max","db","instance","index_names","prev_stmt","plan","decoded_plan","binary_plan","query"],"rows":[[1773973859.727374,"digest-1","plan-digest-1",7.5,0.1,0.2,2.5,1.5,0.3,1000,800,10,2048,0,"app","tidb-0","idx_a","begin","IndexLookUp_1 root 10.00","IndexLookUp(Build) -> TableRowIDScan(Probe)","binary-plan-text","select * from t where a = 1"]]}`)
+			if _, err := io.WriteString(w, `{"columns":["time","digest","plan_digest","query_time","parse_time","compile_time","cop_time","process_time","wait_time","total_keys","process_keys","result_rows","mem_max","disk_max","db","instance","index_names","prev_stmt","plan","decoded_plan","binary_plan","query"],"rows":[[1773973859.727374,"digest-1","plan-digest-1",7.5,0.1,0.2,2.5,1.5,0.3,1000,800,10,2048,0,"app","tidb-0","idx_a","begin","IndexLookUp_1 root 10.00","IndexLookUp(Build) -> TableRowIDScan(Probe)","binary-plan-text","select * from t where a = 1"]]}`); err != nil {
+				t.Fatalf("write detail response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -136,7 +146,9 @@ func TestFetchSlowQueryContextForDetailQuery(t *testing.T) {
 func TestDoJSONReturnsAuthFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		io.WriteString(w, `{"error":"unauthorized"}`)
+		if _, err := io.WriteString(w, `{"error":"unauthorized"}`); err != nil {
+			t.Fatalf("write auth failure response: %v", err)
+		}
 	}))
 	defer server.Close()
 

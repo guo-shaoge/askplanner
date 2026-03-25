@@ -1,3 +1,5 @@
+GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
+
 all: cli larkbot
 
 cli:
@@ -13,4 +15,7 @@ clean:
 fmt:
 	go fmt ./...
 
-.PHONY: all cli larkbot clean fmt
+lint:
+	$(GOLANGCI_LINT) run ./...
+
+.PHONY: all cli larkbot clean fmt lint

@@ -28,7 +28,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("setup logging: %v", err)
 	}
-	defer logFile.Close()
+	defer func() {
+		_ = logFile.Close()
+	}()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()

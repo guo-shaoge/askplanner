@@ -18,7 +18,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("setup logging: %v", err)
 	}
-	defer logFile.Close()
+	defer func() {
+		_ = logFile.Close()
+	}()
 
 	app, err := botapp.New(cfg)
 	if err != nil {

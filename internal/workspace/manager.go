@@ -148,7 +148,9 @@ func (m *Manager) Ensure(ctx context.Context, userKey string) (*Workspace, error
 	if err != nil {
 		return nil, err
 	}
-	defer lock.Close()
+	defer func() {
+		_ = lock.Close()
+	}()
 	return m.ensureLocked(ctx, userKey)
 }
 
@@ -174,7 +176,9 @@ func (m *Manager) SwitchRepo(ctx context.Context, userKey, repoName, ref string)
 	if err != nil {
 		return nil, err
 	}
-	defer lock.Close()
+	defer func() {
+		_ = lock.Close()
+	}()
 
 	meta, dirs, err := m.ensureMetadata(userKey)
 	if err != nil {
@@ -234,7 +238,9 @@ func (m *Manager) Sync(ctx context.Context, userKey, repoName string) (*Workspac
 	if err != nil {
 		return nil, err
 	}
-	defer lock.Close()
+	defer func() {
+		_ = lock.Close()
+	}()
 
 	meta, dirs, err := m.ensureMetadata(userKey)
 	if err != nil {
@@ -284,7 +290,9 @@ func (m *Manager) Reset(ctx context.Context, userKey, repoName string) (*Workspa
 	if err != nil {
 		return nil, err
 	}
-	defer lock.Close()
+	defer func() {
+		_ = lock.Close()
+	}()
 
 	meta, dirs, err := m.ensureMetadata(userKey)
 	if err != nil {
@@ -342,7 +350,9 @@ func (m *Manager) Sweep(ctx context.Context) error {
 		}
 		return err
 	}
-	defer lock.Close()
+	defer func() {
+		_ = lock.Close()
+	}()
 
 	entries, err := os.ReadDir(m.usersDir)
 	if err != nil {
@@ -375,7 +385,7 @@ func (m *Manager) Sweep(ctx context.Context) error {
 		metaPath := filepath.Join(m.usersDir, userKey, "data", metadataFileName)
 		meta, err := loadMetadataFile(metaPath)
 		if err != nil && !os.IsNotExist(err) {
-			lock.Close()
+			_ = lock.Close()
 			return err
 		}
 		lastActive := time.Time{}
@@ -384,15 +394,15 @@ func (m *Manager) Sweep(ctx context.Context) error {
 		}
 		if m.idleTTL > 0 && !lastActive.IsZero() && now.Sub(lastActive) <= m.idleTTL {
 			skippedFresh++
-			lock.Close()
+			_ = lock.Close()
 			continue
 		}
 		if err := m.removeWorkspaceLocked(ctx, userKey); err != nil {
-			lock.Close()
+			_ = lock.Close()
 			return err
 		}
 		deleted++
-		lock.Close()
+		_ = lock.Close()
 	}
 	log.Printf("[workspace] gc sweep done scanned=%d deleted=%d skipped_busy=%d skipped_fresh=%d elapsed=%s",
 		scanned, deleted, skippedBusy, skippedFresh, time.Since(start))
@@ -405,7 +415,9 @@ func (m *Manager) ResetUser(ctx context.Context, userKey string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	defer lock.Close()
+	defer func() {
+		_ = lock.Close()
+	}()
 
 	log.Printf("[workspace] reset user start user=%s", userKey)
 	if err := m.removeWorkspaceLocked(ctx, userKey); err != nil {
@@ -828,7 +840,9 @@ func saveMetadataFile(path string, meta *workspaceMetadata) error {
 		return fmt.Errorf("create metadata temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	defer func() {
+		_ = os.Remove(tmpPath)
+	}()
 	encoder := json.NewEncoder(tmpFile)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(meta); err != nil {

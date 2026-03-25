@@ -68,7 +68,9 @@ func (r *Runner) run(ctx context.Context, workDir string, optionArgs, positional
 		_ = os.Remove(replyPath)
 		return nil, fmt.Errorf("close temp reply file: %w", err)
 	}
-	defer os.Remove(replyPath)
+	defer func() {
+		_ = os.Remove(replyPath)
+	}()
 
 	args := append([]string{}, optionArgs...)
 	args = append(args, "-o", replyPath)

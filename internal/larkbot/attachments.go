@@ -23,7 +23,9 @@ func saveDirectAttachment(ctx context.Context, apiClient *lark.Client, manager *
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(resource.tempPath)
+	defer func() {
+		_ = os.Remove(resource.tempPath)
+	}()
 
 	result, err := manager.Import(attachments.ImportRequest{
 		UserKey:      userKey,
@@ -164,7 +166,7 @@ func findRecentAttachmentMessages(ctx context.Context, apiClient *lark.Client, e
 			req.PageToken(pageToken)
 		}
 
-		resp, err := apiClient.Im.V1.Message.List(ctx, req.Build())
+		resp, err := apiClient.Im.Message.List(ctx, req.Build())
 		if err != nil {
 			return nil, fmt.Errorf("list recent messages: %w", err)
 		}
@@ -267,7 +269,7 @@ func downloadResourceFromEvent(ctx context.Context, apiClient *lark.Client, temp
 }
 
 func downloadMessageResourceToTemp(ctx context.Context, apiClient *lark.Client, tempRoot, messageID, fileKey, resourceType string, createdAt time.Time) (*downloadedResource, error) {
-	resp, err := apiClient.Im.V1.MessageResource.Get(ctx,
+	resp, err := apiClient.Im.MessageResource.Get(ctx,
 		larkim.NewGetMessageResourceReqBuilder().
 			MessageId(messageID).
 			FileKey(fileKey).

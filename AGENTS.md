@@ -54,9 +54,18 @@ Codex CLI `WorkDir` = project root, so it reads `contrib/` via shell commands (`
 ```bash
 make all          # bin/askplanner_cli + bin/askplanner_larkbot
 make larkbot      # larkbot only
+make lint         # run golangci-lint with the pinned repo version
 ```
 
 Requires: **Go 1.23+**, **codex CLI** in PATH, git submodules initialized.
+
+## Lint
+
+```bash
+make lint
+```
+
+Lint uses `golangci-lint` via `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4`, so contributors do not need a separate global install.
 
 ## Environment Variables
 
@@ -118,3 +127,4 @@ Answer: read from reply file (`-o`), fallback to `final_answer` in JSON stdout.
 - Module: `lab/askplanner`
 - Standard `log` package, env-var-only config, no external deps beyond Lark SDK
 - All paths relative to project root
+- Keep the Go tree `gofmt`-formatted and `make lint` clean before finishing changes

@@ -326,7 +326,7 @@ func saveManifest(userDir string, items []Item) error {
 	}
 	tmpPath := tmpFile.Name()
 	if _, err := tmpFile.Write(append(data, '\n')); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("write clinic store manifest: %w", err)
 	}
@@ -352,7 +352,7 @@ func writeBytesFile(path string, data []byte) error {
 	}
 	tmpPath := tmpFile.Name()
 	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
 		return err
 	}
