@@ -135,6 +135,34 @@ make
 ./bin/askplanner_cli
 ```
 
+## Usage Dashboard
+
+askplanner includes a local usage dashboard for lightweight observability.
+
+- Binary: `bin/askplanner_usage`
+- Default address: `http://127.0.0.1:18080`
+- Pages:
+  - `/` overview dashboard (session snapshot + cumulative usage)
+  - `/questions` paginated question detail page with filters
+- APIs:
+  - `/api/usage`
+  - `/api/users`
+  - `/api/questions`
+
+What it shows:
+
+- Cumulative metrics: total users, total questions, active users (24h / 7d), avg questions per user
+- User-level metrics: per-user question counts, last question time, top users
+- Question details: question text, user, source, status, latency, model, conversation key, pagination/filtering
+- Operational snapshots: recent requests, recent errors, session/workspace breakdowns
+
+Data sources and metric semantics:
+
+- `.askplanner/usage_questions.jsonl` (`USAGE_QUESTIONS_PATH`) is the append-only event store for cumulative user/question metrics.
+- Existing `sessions.json` is used for best-effort historical backfill and session snapshots.
+- `askplanner.log` tail is used for recent request/error trend cards.
+- Snapshot-style and cumulative-style metrics are both displayed; interpret them separately.
+
 The REPL supports:
 - regular questions
 - `reset` to drop the local Codex session

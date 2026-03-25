@@ -7,6 +7,7 @@ Go relay for **TiDB SQL query tuning**. Receives questions (CLI or Lark bot) →
 ```
 cmd/askplanner (CLI REPL)  ─┐
 cmd/larkbot (bootstrap)    ─┤
+cmd/askplanner_usage       ─┤
                              ├→ internal/larkbot/app (Feishu bot app lifecycle)
                              │       → internal/larkbot/handler (message routing)
                              │       → internal/larkbot/thread_context (topic history prefetch for new sessions)
@@ -17,6 +18,7 @@ cmd/larkbot (bootstrap)    ─┤
                              │       → internal/codex/runner (exec codex CLI)
                              │            → codex exec ... (external binary)
                              │                 → answer (reply file or JSON stdout)
+                             ├→ internal/usage (dashboard collector, question event store, HTTP pages/APIs)
 ```
 
 ## Key Files
@@ -38,8 +40,12 @@ cmd/larkbot (bootstrap)    ─┤
 | `internal/workspace/manager.go` | Per-user workspace lifecycle, repo switch/sync/reset, background jobs |
 | `internal/clinic/prefetcher.go` | Clinic slow-query link detection, prefetch, stored snapshot context |
 | `internal/attachments/store.go` | User attachment library import/snapshot/quota management |
+| `internal/usage/events.go` | Append-only question event store + best-effort session backfill (`usage_questions.jsonl`) |
+| `internal/usage/collector.go` | Usage aggregations: cumulative user/question metrics, user ranking, paginated question listing |
+| `internal/usage/http.go` | Dashboard web handlers: `/`, `/questions`, `/api/usage`, `/api/users`, `/api/questions` |
 | `cmd/askplanner/main.go` | CLI REPL (`reset`, `quit`) |
 | `cmd/larkbot/main.go` | Thin bootstrap: load config/logging, construct app, call `Run()` |
+| `cmd/askplanner_usage/main.go` | Usage dashboard server bootstrap |
 
 ## contrib/ Submodules
 
@@ -75,6 +81,9 @@ Requires: **Go 1.23+**, **codex CLI** in PATH, git submodules initialized.
 | `CODEX_SESSION_TTL_HOURS` | `24` | |
 | `CODEX_TIMEOUT_SEC` | `120` | Per-call timeout |
 | `LOG_FILE` | `.askplanner/askplanner.log` | |
+| `USAGE_HTTP_ADDR` | `127.0.0.1:18080` | Usage dashboard listen address |
+| `USAGE_LOG_TAIL_BYTES` | `4194304` | Max log bytes scanned when reading recent request/error trends |
+| `USAGE_QUESTIONS_PATH` | `.askplanner/usage_questions.jsonl` | Append-only question event store for cumulative metrics and `/questions` page |
 | `PROJECT_ROOT` | auto-detected | Walks up looking for `prompt` file |
 | `PROMPT_FILE` | `prompt` | Relative to project root |
 | `WORKSPACE_ROOT` | `.askplanner/workspaces` | Per-user workspace root |
@@ -163,6 +172,94 @@ When the hash changes (e.g., user switches branches), `canResume()` in the respo
 - For Lark topic messages with non-empty `thread_id`, the relay prefetches earlier visible thread messages and injects them only into the **initial** prompt of a new bot session; resume prompts do not repeat thread history
 - On resume failure: auto-starts new session with last 6 turns as context
 - Editing `prompt` invalidates all sessions (hash changes)
+
+## Usage Dashboard (Agent Fast Path)
+
+### Core principle
+
+The usage tool is a local observability layer with **two metric types**:
+
+- **Cumulative metrics** (users/questions, top users, question details) from append-only question events (`USAGE_QUESTIONS_PATH`).
+- **Snapshot/recent metrics** (active sessions, recent requests/errors, workspace/session breakdown) from `sessions.json`, workspace metadata, and log tail.
+
+Do not treat all cards as the same source of truth. Cumulative and snapshot metrics are intentionally mixed on the same page.
+
+### Main entrypoints and call flow
+
+Runtime entrypoints:
+
+- Dashboard server bootstrap: `cmd/askplanner_usage/main.go`
+- HTTP handlers/pages: `internal/usage/http.go`
+- Aggregation and pagination: `internal/usage/collector.go`
+- Event write path + startup backfill: `internal/usage/events.go`
+
+Question event write flow:
+
+1. CLI/Lark question handling starts a span via `QuestionTracker.Begin(...)`.
+2. The span is finalized as `success`, `short_circuit`, or `error`.
+3. Finalized events are appended to `usage_questions.jsonl`.
+4. Append failures are non-fatal (must not break answer path).
+
+Backfill flow:
+
+1. Tracker/store init calls `BackfillFromSessions()`.
+2. Existing `sessions.json` turns are converted into `QuestionEvent` entries (`backfilled=true`).
+3. Backfill is idempotent via stable event IDs.
+
+### Key data structures
+
+`internal/usage/events.go`:
+
+- `QuestionEvent`
+  - Identity: `event_id`
+  - Time/source identity: `asked_at`, `source`, `user_key`, `conversation_key`
+  - Payload: `question`, `status`, `duration_ms`, `model`, `error`
+  - Provenance: `backfilled`, `workspace_env_hash`, `question_fingerprint`
+- `QuestionTracker` / `QuestionSpan`
+  - Tracks one logical user question lifecycle.
+  - Guarantees at-most-one append per span.
+- `QuestionStore`
+  - JSONL append + load + session backfill.
+  - Uses file lock to serialize writes/backfill.
+
+`internal/usage/collector.go`:
+
+- `Snapshot`
+  - Homepage payload (`/api/usage`): `summary`, breakdown arrays, trend arrays, `top_users`, recent tables.
+- `Summary`
+  - Includes `total_users`, `total_questions`, `active_users_24_hours`, `active_users_7_days`, etc.
+- `UserSummary`
+  - Per-user aggregate: cumulative + 24h/7d counts, last question/time.
+- `QuestionsPage` / `UsersPage`
+  - Paginated API responses for `/api/questions` and `/api/users`.
+
+### API and filters
+
+Pages:
+
+- `/`: dashboard
+- `/questions`: detailed paginated question list
+
+JSON APIs:
+
+- `/api/usage`: aggregated dashboard snapshot
+- `/api/users?page=&page_size=`: paginated user aggregates
+- `/api/questions?page=&page_size=&user_key=&source=&status=&q=&from=&to=`: paginated question events
+
+Filter semantics:
+
+- `from` / `to`: date-based bounds (`YYYY-MM-DD`).
+- `source`: normalized to `cli|lark|other`.
+- `status`: `success|short_circuit|error`.
+- `q`: case-insensitive substring search on question/user/conversation key.
+
+### Semantics and caveats
+
+- `usage_questions.jsonl` is the source of truth for cumulative user/question metrics.
+- `total_users` is distinct `user_key` count from question events (not session count).
+- CLI traffic is normalized as virtual user `cli:default`.
+- Historical counts are best-effort because backfill only sees currently retained session turns.
+- Recent request/error trend cards come from log tail parsing, not from question events.
 
 ## Codex CLI Invocation
 
