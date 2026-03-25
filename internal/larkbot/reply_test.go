@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
+
+	"lab/askplanner/internal/usererr"
 )
 
 func TestWithTypingReactionAddsAndDeletesReaction(t *testing.T) {
@@ -306,6 +308,35 @@ func TestReplyMessageFallsBackWhenThreadReplyUnsupported(t *testing.T) {
 	}
 	if got := strings.Join(replyFlags, ","); got != "true,unset" {
 		t.Fatalf("reply flags = %q, want true,unset", got)
+	}
+}
+
+func TestBuildTextReplyBodyNormalizesEmptyText(t *testing.T) {
+	body, err := buildTextReplyBody("   \n\t ")
+	if err != nil {
+		t.Fatalf("buildTextReplyBody error: %v", err)
+	}
+	if body.msgType != "text" {
+		t.Fatalf("msgType = %q, want text", body.msgType)
+	}
+
+	var content struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(body.content), &content); err != nil {
+		t.Fatalf("unmarshal content: %v", err)
+	}
+	if content.Text != " " {
+		t.Fatalf("text = %q, want single space", content.Text)
+	}
+}
+
+func TestShouldFallbackToTextReply(t *testing.T) {
+	if !shouldFallbackToTextReply(usererr.New(usererr.KindInvalidInput, "Feishu rejected the rich reply format or content. Falling back to plain text may work.")) {
+		t.Fatalf("expected unsupported format error to fall back")
+	}
+	if shouldFallbackToTextReply(usererr.New(usererr.KindRateLimit, "Feishu is rate-limiting bot replies right now. Please retry in a moment.")) {
+		t.Fatalf("expected rate limit error not to fall back")
 	}
 }
 

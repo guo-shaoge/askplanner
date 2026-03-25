@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -11,13 +12,15 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"lab/askplanner/internal/usererr"
 )
 
 type Runner struct {
-	Bin             string
-	Model           string
-	ReasoningEffort string
-	Sandbox         string
+	Bin                    string
+	DefaultModel           string
+	DefaultReasoningEffort string
+	Sandbox                string
 }
 
 type RunResult struct {
@@ -27,34 +30,50 @@ type RunResult struct {
 	Stderr    string
 }
 
-func (r *Runner) RunNew(ctx context.Context, workDir, prompt string) (*RunResult, error) {
+func (r *Runner) RunNew(ctx context.Context, workDir, model, reasoningEffort, prompt string) (*RunResult, error) {
 	args := []string{
 		"exec",
 		"--sandbox", r.Sandbox,
 		"--json",
 	}
-	if strings.TrimSpace(r.Model) != "" {
-		args = append(args, "--model", r.Model)
+	if resolvedModel := r.resolveModel(model); resolvedModel != "" {
+		args = append(args, "--model", resolvedModel)
 	}
-	if strings.TrimSpace(r.ReasoningEffort) != "" {
-		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", r.ReasoningEffort))
+	if resolvedReasoningEffort := r.resolveReasoningEffort(reasoningEffort); resolvedReasoningEffort != "" {
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", resolvedReasoningEffort))
 	}
 	return r.run(ctx, workDir, args, nil, prompt, true)
 }
 
-func (r *Runner) RunResume(ctx context.Context, workDir, sessionID, prompt string) (*RunResult, error) {
+func (r *Runner) RunResume(ctx context.Context, workDir, sessionID, model, reasoningEffort, prompt string) (*RunResult, error) {
 	args := []string{
 		"exec",
 		"resume",
 		"--json",
 	}
-	if strings.TrimSpace(r.Model) != "" {
-		args = append(args, "--model", r.Model)
+	if resolvedModel := r.resolveModel(model); resolvedModel != "" {
+		args = append(args, "--model", resolvedModel)
 	}
-	if strings.TrimSpace(r.ReasoningEffort) != "" {
-		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", r.ReasoningEffort))
+	if resolvedReasoningEffort := r.resolveReasoningEffort(reasoningEffort); resolvedReasoningEffort != "" {
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", resolvedReasoningEffort))
 	}
 	return r.run(ctx, workDir, args, []string{sessionID}, prompt, false)
+}
+
+func (r *Runner) resolveModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model != "" {
+		return model
+	}
+	return strings.TrimSpace(r.DefaultModel)
+}
+
+func (r *Runner) resolveReasoningEffort(effort string) string {
+	effort = strings.TrimSpace(strings.ToLower(effort))
+	if effort != "" {
+		return effort
+	}
+	return strings.TrimSpace(strings.ToLower(r.DefaultReasoningEffort))
 }
 
 func (r *Runner) run(ctx context.Context, workDir string, optionArgs, positionalArgs []string, prompt string, skipLogPrompt bool) (*RunResult, error) {
@@ -113,22 +132,13 @@ func (r *Runner) run(ctx context.Context, workDir string, optionArgs, positional
 			return result, nil
 		}
 		log.Printf("[codex] error: %v\nstderr: %s", runErr, strings.TrimSpace(stderr.String()))
-		return nil, fmt.Errorf("run %s %s: %w\nstderr:\n%s\nstdout:\n%s",
-			r.Bin,
-			strings.Join(args[:len(args)-1], " "),
-			runErr,
-			strings.TrimSpace(stderr.String()),
-			strings.TrimSpace(stdout.String()),
-		)
+		return nil, classifyRunError(ctx, runErr, stderr.String(), stdout.String())
 	}
 
 	result.Answer = strings.TrimSpace(result.Answer)
 	if result.Answer == "" {
 		log.Printf("[codex] error: empty answer\nstderr: %s", strings.TrimSpace(stderr.String()))
-		return nil, fmt.Errorf("codex returned empty answer\nstderr:\n%s\nstdout:\n%s",
-			strings.TrimSpace(stderr.String()),
-			strings.TrimSpace(stdout.String()),
-		)
+		return nil, usererr.New(usererr.KindUnavailable, "Codex did not return a usable answer. Please retry.")
 	}
 
 	log.Printf("[codex] success (session=%s, answer_len=%d, elapsed=%s)", result.SessionID, len(result.Answer), time.Since(start))
@@ -197,6 +207,44 @@ func extractFinalAnswer(stdout string) string {
 		}
 	}
 	return ""
+}
+
+func classifyRunError(ctx context.Context, runErr error, stderr, stdout string) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(runErr, context.DeadlineExceeded) {
+		return usererr.Wrap(usererr.KindTimeout, "The request timed out while waiting for Codex. Please retry.", runErr)
+	}
+	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(runErr, context.Canceled) {
+		return usererr.Wrap(usererr.KindUnavailable, "The request was canceled before Codex finished.", runErr)
+	}
+
+	lower := strings.ToLower(strings.Join([]string{
+		runErr.Error(),
+		stderr,
+		stdout,
+	}, "\n"))
+
+	if errors.Is(runErr, exec.ErrNotFound) || strings.Contains(lower, "executable file not found") {
+		return usererr.Wrap(usererr.KindConfig, "Codex CLI is not available on this host. Check `CODEX_BIN` and the Codex installation.", runErr)
+	}
+	switch {
+	case containsAny(lower, "rate limit", "too many requests", "429"):
+		return usererr.Wrap(usererr.KindRateLimit, "Codex is rate-limited right now. Please retry in a moment.", runErr)
+	case containsAny(lower, "deadline exceeded", "timed out", "i/o timeout", "timeout"):
+		return usererr.Wrap(usererr.KindTimeout, "The request timed out while waiting for Codex. Please retry.", runErr)
+	case containsAny(lower, "connection refused", "connection reset", "network is unreachable", "no such host", "temporary failure in name resolution", "tls handshake timeout", "dial tcp"):
+		return usererr.Wrap(usererr.KindNetwork, "Codex could not be reached because of a network problem. Please retry.", runErr)
+	default:
+		return usererr.Wrap(usererr.KindUnavailable, "Codex execution failed. Please retry. If it keeps failing, check the relay logs.", runErr)
+	}
+}
+
+func containsAny(s string, parts ...string) bool {
+	for _, part := range parts {
+		if strings.Contains(s, part) {
+			return true
+		}
+	}
+	return false
 }
 
 func DefaultSessionStorePath(projectRoot string) string {

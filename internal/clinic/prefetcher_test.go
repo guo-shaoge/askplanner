@@ -2,6 +2,7 @@ package clinic
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +48,95 @@ func TestPrefetcherReturnsUserErrorWhenAPIKeyMissing(t *testing.T) {
 	}
 	if got := UserFacingMessage(err); got == "" {
 		t.Fatalf("expected user-facing error, got %v", err)
+	}
+}
+
+func TestClassifyClinicFetchErrorRateLimit(t *testing.T) {
+	err := classifyClinicFetchError(errors.New("Clinic API returned status 429: too many requests"))
+	if got := UserFacingMessage(err); !strings.Contains(got, "rate-limiting") {
+		t.Fatalf("user-facing message = %q", got)
+	}
+}
+
+func TestBuildIntroReplyUnsavedDoesNotClaimSaved(t *testing.T) {
+	reply := buildIntroReply(codex.RuntimeContext{
+		Clinic: &codex.ClinicContext{
+			ClusterID: "123",
+			Summary: codex.ClinicSummary{
+				TotalQueries: 1,
+			},
+		},
+	}, false)
+	if !strings.Contains(reply, "couldn't save it locally") {
+		t.Fatalf("unexpected intro reply: %q", reply)
+	}
+	if strings.Contains(reply, "Saved Entry:") {
+		t.Fatalf("unsaved intro should not claim a saved entry: %q", reply)
+	}
+}
+
+func TestShowcaseClinicUserFacingMessages(t *testing.T) {
+	prefetcher, err := NewPrefetcher(&config.Config{
+		ClinicEnableAutoSlowQuery: true,
+		ClinicHTTPTimeoutSec:      5,
+		ClinicStoreDir:            t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("NewPrefetcher: %v", err)
+	}
+
+	_, err = prefetcher.Enrich(
+		context.Background(),
+		"user-a",
+		"https://clinic.pingcap.com/#/slowquery?clusterId=123&startTime=2026-03-20T01:02:03Z&endTime=2026-03-20T02:02:03Z",
+		codex.RuntimeContext{},
+	)
+	if got := UserFacingMessage(err); got != "Clinic slow query auto-analysis is enabled, but `CLINIC_API_KEY` is not configured." {
+		t.Fatalf("missing_api_key message = %q", got)
+	} else {
+		t.Logf("missing_api_key => %s", got)
+	}
+
+	testCases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "auth",
+			err:  errors.New("auth failed: invalid api key"),
+			want: "Clinic API authentication failed. Check `CLINIC_API_KEY` and verify the key can access clinic.pingcap.com.",
+		},
+		{
+			name: "rate_limit",
+			err:  errors.New("Clinic API returned status 429: too many requests"),
+			want: "Clinic is rate-limiting requests right now. Please retry in a moment.",
+		},
+		{
+			name: "timeout",
+			err:  context.DeadlineExceeded,
+			want: "Clinic slow query fetch timed out. Please retry.",
+		},
+		{
+			name: "network",
+			err:  errors.New("dial tcp 10.0.0.1:443: connect: connection refused"),
+			want: "Clinic could not be reached because of a network problem. Please retry.",
+		},
+		{
+			name: "unavailable",
+			err:  errors.New("Clinic API returned status 503"),
+			want: "Clinic is temporarily unavailable. Please retry.",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := UserFacingMessage(classifyClinicFetchError(tc.err))
+			if got != tc.want {
+				t.Fatalf("user-facing message = %q, want %q", got, tc.want)
+			}
+			t.Logf("%s => %s", tc.name, got)
+		})
 	}
 }
 
@@ -129,7 +219,7 @@ func TestPrefetcherReturnsIntroReplyForNewClinicLink(t *testing.T) {
 	if enriched.RuntimeContext.Clinic == nil {
 		t.Fatalf("expected clinic context")
 	}
-	if !strings.Contains(enriched.IntroReply, "I saved this Clinic slow query snapshot locally.") {
+	if !strings.Contains(enriched.IntroReply, "Agent saved this Clinic slow query snapshot locally.") {
 		t.Fatalf("unexpected intro reply: %q", enriched.IntroReply)
 	}
 	if !strings.Contains(enriched.IntroReply, "Tell me what you want to do next") {

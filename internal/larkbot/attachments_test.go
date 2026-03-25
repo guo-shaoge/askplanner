@@ -1,6 +1,7 @@
 package larkbot
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 
 	"lab/askplanner/internal/attachments"
+	"lab/askplanner/internal/usererr"
 )
 
 func TestParseUploadCommand(t *testing.T) {
@@ -24,6 +26,33 @@ func TestParseUploadCommand(t *testing.T) {
 
 	if bad := parseUploadCommand("/upload_x test"); bad.ok {
 		t.Fatalf("expected invalid command to be rejected")
+	}
+	if bad := parseUploadCommand("/upload_x test"); !bad.matched {
+		t.Fatalf("expected invalid command to keep matched=true")
+	}
+}
+
+func TestPrepareReplyRejectsInvalidUploadCommand(t *testing.T) {
+	msgType := "text"
+	text := `{"text":"/upload_x analyze these files"}`
+	openID := "ou_user"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				MessageType: &msgType,
+				Content:     &text,
+			},
+			Sender: &larkim.EventSender{
+				SenderId: &larkim.UserId{
+					OpenId: &openID,
+				},
+			},
+		},
+	}
+
+	_, err := prepareReply(context.Background(), nil, nil, event)
+	if got := usererr.Message(err); !strings.Contains(got, "Invalid upload command") {
+		t.Fatalf("user-facing message = %q", got)
 	}
 }
 

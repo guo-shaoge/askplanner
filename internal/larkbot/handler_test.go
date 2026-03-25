@@ -2,21 +2,42 @@ package larkbot
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"lab/askplanner/internal/clinic"
 	"lab/askplanner/internal/codex"
+	"lab/askplanner/internal/modelcmd"
+	"lab/askplanner/internal/usererr"
 	"lab/askplanner/internal/workspace"
 )
 
 type fakeResponder struct {
-	answer           string
-	err              error
-	calls            int
-	lastContext      context.Context
-	lastConversation string
-	lastQuestion     string
-	lastRuntime      codex.RuntimeContext
+	answer            string
+	err               error
+	markErr           error
+	calls             int
+	markCalls         int
+	lastContext       context.Context
+	lastConversation  string
+	lastQuestion      string
+	lastRuntime       codex.RuntimeContext
+	lastNoticeUser    string
+	lastNoticeConv    string
+	lastNotice        codex.WorkspaceSessionNotice
+	modelState        codex.ModelState
+	setModelResult    codex.ModelChangeResult
+	setModelErr       error
+	resetModelResult  codex.ModelChangeResult
+	resetModelErr     error
+	setEffortResult   codex.ModelChangeResult
+	setEffortErr      error
+	resetEffortResult codex.ModelChangeResult
+	resetEffortErr    error
+	modelCalls        int
+	lastModel         string
+	lastEffort        string
+	lastModelAction   string
 }
 
 func (f *fakeResponder) AnswerWithContext(ctx context.Context, conversationKey, question string, runtime codex.RuntimeContext) (string, error) {
@@ -29,6 +50,65 @@ func (f *fakeResponder) AnswerWithContext(ctx context.Context, conversationKey, 
 		return "", f.err
 	}
 	return f.answer, nil
+}
+
+func (f *fakeResponder) GetModelState(conversationKey string) codex.ModelState {
+	f.modelCalls++
+	f.lastConversation = conversationKey
+	if f.lastModelAction == "" {
+		f.lastModelAction = "status"
+	}
+	return f.modelState
+}
+
+func (f *fakeResponder) SetModel(conversationKey, model string) (codex.ModelChangeResult, error) {
+	f.modelCalls++
+	f.lastConversation = conversationKey
+	f.lastModel = model
+	f.lastModelAction = "set"
+	if f.setModelErr != nil {
+		return codex.ModelChangeResult{}, f.setModelErr
+	}
+	return f.setModelResult, nil
+}
+
+func (f *fakeResponder) ResetModel(conversationKey string) (codex.ModelChangeResult, error) {
+	f.modelCalls++
+	f.lastConversation = conversationKey
+	f.lastModelAction = "reset"
+	if f.resetModelErr != nil {
+		return codex.ModelChangeResult{}, f.resetModelErr
+	}
+	return f.resetModelResult, nil
+}
+
+func (f *fakeResponder) SetReasoningEffort(conversationKey, effort string) (codex.ModelChangeResult, error) {
+	f.modelCalls++
+	f.lastConversation = conversationKey
+	f.lastEffort = effort
+	f.lastModelAction = "effort"
+	if f.setEffortErr != nil {
+		return codex.ModelChangeResult{}, f.setEffortErr
+	}
+	return f.setEffortResult, nil
+}
+
+func (f *fakeResponder) ResetReasoningEffort(conversationKey string) (codex.ModelChangeResult, error) {
+	f.modelCalls++
+	f.lastConversation = conversationKey
+	f.lastModelAction = "reset-effort"
+	if f.resetEffortErr != nil {
+		return codex.ModelChangeResult{}, f.resetEffortErr
+	}
+	return f.resetEffortResult, nil
+}
+
+func (f *fakeResponder) MarkWorkspaceChanged(userKey, sourceConversationKey string, notice codex.WorkspaceSessionNotice) error {
+	f.markCalls++
+	f.lastNoticeUser = userKey
+	f.lastNoticeConv = sourceConversationKey
+	f.lastNotice = notice
+	return f.markErr
 }
 
 type fakePrefetcher struct {
@@ -57,20 +137,23 @@ func (f *fakePrefetcher) Enrich(ctx context.Context, userKey, question string, r
 }
 
 type fakeWorkspaceService struct {
-	ensureWS    *workspace.Workspace
-	ensureErr   error
-	statusWS    *workspace.Workspace
-	statusErr   error
-	switchWS    *workspace.Workspace
-	switchErr   error
-	syncWS      *workspace.Workspace
-	syncErr     error
-	resetWS     *workspace.Workspace
-	resetErr    error
-	lastAction  string
-	lastUserKey string
-	lastRepo    string
-	lastRef     string
+	ensureWS      *workspace.Workspace
+	ensureErr     error
+	statusWS      *workspace.Workspace
+	statusErr     error
+	switchWS      *workspace.Workspace
+	switchChanged bool
+	switchErr     error
+	syncWS        *workspace.Workspace
+	syncChanged   bool
+	syncErr       error
+	resetWS       *workspace.Workspace
+	resetChanged  bool
+	resetErr      error
+	lastAction    string
+	lastUserKey   string
+	lastRepo      string
+	lastRef       string
 }
 
 func (f *fakeWorkspaceService) Ensure(ctx context.Context, userKey string) (*workspace.Workspace, error) {
@@ -85,26 +168,26 @@ func (f *fakeWorkspaceService) Status(ctx context.Context, userKey string) (*wor
 	return f.statusWS, f.statusErr
 }
 
-func (f *fakeWorkspaceService) SwitchRepo(ctx context.Context, userKey, repoName, ref string) (*workspace.Workspace, error) {
+func (f *fakeWorkspaceService) SwitchRepo(ctx context.Context, userKey, repoName, ref string) (*workspace.Workspace, bool, error) {
 	f.lastAction = "switch"
 	f.lastUserKey = userKey
 	f.lastRepo = repoName
 	f.lastRef = ref
-	return f.switchWS, f.switchErr
+	return f.switchWS, f.switchChanged, f.switchErr
 }
 
-func (f *fakeWorkspaceService) Sync(ctx context.Context, userKey, repoName string) (*workspace.Workspace, error) {
+func (f *fakeWorkspaceService) Sync(ctx context.Context, userKey, repoName string) (*workspace.Workspace, bool, error) {
 	f.lastAction = "sync"
 	f.lastUserKey = userKey
 	f.lastRepo = repoName
-	return f.syncWS, f.syncErr
+	return f.syncWS, f.syncChanged, f.syncErr
 }
 
-func (f *fakeWorkspaceService) Reset(ctx context.Context, userKey, repoName string) (*workspace.Workspace, error) {
+func (f *fakeWorkspaceService) Reset(ctx context.Context, userKey, repoName string) (*workspace.Workspace, bool, error) {
 	f.lastAction = "reset"
 	f.lastUserKey = userKey
 	f.lastRepo = repoName
-	return f.resetWS, f.resetErr
+	return f.resetWS, f.resetChanged, f.resetErr
 }
 
 func TestHandlePreparedReplyPrefixesAnswerForStandardQuestion(t *testing.T) {
@@ -117,11 +200,12 @@ func TestHandlePreparedReplyPrefixesAnswerForStandardQuestion(t *testing.T) {
 		question:        "select * from t",
 		prefix:          "Downloaded 1 item(s).",
 		attachmentCtx:   codex.AttachmentContext{RootDir: "/tmp/original-files"},
+		threadCtx:       &codex.ThreadContext{ThreadID: "omt-thread"},
 		conversationKey: "conv-1",
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -143,6 +227,12 @@ func TestHandlePreparedReplyPrefixesAnswerForStandardQuestion(t *testing.T) {
 	if responder.lastRuntime.Workspace == nil || responder.lastRuntime.Workspace.RootDir != ws.RootDir {
 		t.Fatalf("responder workspace root = %+v", responder.lastRuntime.Workspace)
 	}
+	if responder.lastRuntime.UserKey != "ou_user" {
+		t.Fatalf("responder user key = %q, want ou_user", responder.lastRuntime.UserKey)
+	}
+	if responder.lastRuntime.Thread == nil || responder.lastRuntime.Thread.ThreadID != "omt-thread" {
+		t.Fatalf("responder thread context = %+v", responder.lastRuntime.Thread)
+	}
 }
 
 func TestHandlePreparedReplyUsesIntroReplyWithoutCallingResponder(t *testing.T) {
@@ -162,7 +252,7 @@ func TestHandlePreparedReplyUsesIntroReplyWithoutCallingResponder(t *testing.T) 
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -174,13 +264,56 @@ func TestHandlePreparedReplyUsesIntroReplyWithoutCallingResponder(t *testing.T) 
 	}
 }
 
+func TestHandlePreparedReplyPassesThreadContextLoaderToResponder(t *testing.T) {
+	ws := newWorkspaceFixture()
+	responder := &fakeResponder{answer: "final answer"}
+	prefetcher := &fakePrefetcher{passthrough: true}
+	workspaceSvc := &fakeWorkspaceService{ensureWS: ws}
+	loads := 0
+
+	prepared := &preparedReply{
+		question:        "select * from t",
+		conversationKey: "conv-thread-new",
+		userKey:         "ou_user",
+		threadCtxLoader: func(ctx context.Context) (*codex.ThreadContext, error) {
+			loads++
+			return &codex.ThreadContext{ThreadID: "omt-thread"}, nil
+		},
+	}
+
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
+	if err != nil {
+		t.Fatalf("handlePreparedReply error: %v", err)
+	}
+	if got != "final answer" {
+		t.Fatalf("result = %q", got)
+	}
+	if loads != 0 {
+		t.Fatalf("thread context loads = %d, want 0", loads)
+	}
+	if responder.lastRuntime.Thread != nil {
+		t.Fatalf("responder thread context = %+v, want nil", responder.lastRuntime.Thread)
+	}
+	if responder.lastRuntime.ThreadLoader == nil {
+		t.Fatalf("responder thread loader = nil, want non-nil")
+	}
+	threadCtx, err := responder.lastRuntime.ThreadLoader(context.Background())
+	if err != nil {
+		t.Fatalf("runtime thread loader returned error: %v", err)
+	}
+	if loads != 1 {
+		t.Fatalf("thread context loads = %d, want 1 after explicit load", loads)
+	}
+	if threadCtx == nil || threadCtx.ThreadID != "omt-thread" {
+		t.Fatalf("loaded thread context = %+v", threadCtx)
+	}
+}
+
 func TestHandlePreparedReplyReturnsUserFacingClinicErrorWithUploadPrefix(t *testing.T) {
 	workspaceSvc := &fakeWorkspaceService{ensureWS: newWorkspaceFixture()}
 	responder := &fakeResponder{answer: "should not be used"}
 	prefetcher := &fakePrefetcher{
-		err: &clinic.UserError{
-			Message: "clinic failed",
-		},
+		err: usererr.New(usererr.KindUnavailable, "clinic failed"),
 	}
 
 	prepared := &preparedReply{
@@ -190,7 +323,7 @@ func TestHandlePreparedReplyReturnsUserFacingClinicErrorWithUploadPrefix(t *test
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -215,7 +348,7 @@ func TestHandlePreparedReplyRunsWorkspaceStatusQuestion(t *testing.T) {
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -232,9 +365,7 @@ func TestHandlePreparedReplyRunsWorkspaceSwitchQuestionWithUserFacingError(t *te
 	ws := newWorkspaceFixture()
 	responder := &fakeResponder{answer: "should not be used"}
 	prefetcher := &fakePrefetcher{
-		err: &clinic.UserError{
-			Message: "clinic failed",
-		},
+		err: usererr.New(usererr.KindUnavailable, "clinic failed"),
 	}
 	workspaceSvc := &fakeWorkspaceService{switchWS: ws}
 
@@ -245,7 +376,7 @@ func TestHandlePreparedReplyRunsWorkspaceSwitchQuestionWithUserFacingError(t *te
 		userKey:         "ou_user",
 	}
 
-	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, prepared)
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
 	if err != nil {
 		t.Fatalf("handlePreparedReply error: %v", err)
 	}
@@ -261,6 +392,183 @@ func TestHandlePreparedReplyRunsWorkspaceSwitchQuestionWithUserFacingError(t *te
 	}
 	if responder.calls != 0 {
 		t.Fatalf("responder calls = %d, want 0", responder.calls)
+	}
+	if responder.markCalls != 0 {
+		t.Fatalf("mark calls = %d, want 0", responder.markCalls)
+	}
+}
+
+func TestHandlePreparedReplyMarksOtherConversationsAfterWorkspaceChange(t *testing.T) {
+	ws := newWorkspaceFixture()
+	responder := &fakeResponder{answer: "workspace answer"}
+	prefetcher := &fakePrefetcher{passthrough: true}
+	workspaceSvc := &fakeWorkspaceService{switchWS: ws, switchChanged: true}
+
+	prepared := &preparedReply{
+		question:        "inspect this branch",
+		workspaceCmd:    &workspace.Command{Action: "switch", Repo: "tidb", Ref: "release-8.5"},
+		conversationKey: "conv-6",
+		userKey:         "ou_user",
+	}
+
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
+	if err != nil {
+		t.Fatalf("handlePreparedReply error: %v", err)
+	}
+	want := workspace.FormatStatus(ws) + "\n\nworkspace answer"
+	if got != want {
+		t.Fatalf("result mismatch:\n got: %q\nwant: %q", got, want)
+	}
+	if responder.markCalls != 1 {
+		t.Fatalf("mark calls = %d, want 1", responder.markCalls)
+	}
+	if responder.lastNoticeUser != "ou_user" || responder.lastNoticeConv != "conv-6" {
+		t.Fatalf("mark args = user:%q conv:%q", responder.lastNoticeUser, responder.lastNoticeConv)
+	}
+	if responder.lastNotice.NewEnvironmentHash != ws.EnvironmentHash {
+		t.Fatalf("notice env hash = %q, want %q", responder.lastNotice.NewEnvironmentHash, ws.EnvironmentHash)
+	}
+	if responder.lastNotice.Message == "" {
+		t.Fatalf("notice message is empty")
+	}
+}
+
+func TestHandlePreparedReplyIgnoresWorkspaceMarkFailure(t *testing.T) {
+	ws := newWorkspaceFixture()
+	responder := &fakeResponder{answer: "workspace answer", markErr: context.DeadlineExceeded}
+	prefetcher := &fakePrefetcher{passthrough: true}
+	workspaceSvc := &fakeWorkspaceService{resetWS: ws, resetChanged: true}
+
+	prepared := &preparedReply{
+		question:        "what changed",
+		workspaceCmd:    &workspace.Command{Action: "reset", Repo: "all"},
+		conversationKey: "conv-7",
+		userKey:         "ou_user",
+	}
+
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
+	if err != nil {
+		t.Fatalf("handlePreparedReply error: %v", err)
+	}
+	want := workspace.FormatStatus(ws) + "\n\nworkspace answer"
+	if got != want {
+		t.Fatalf("result mismatch:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestHandlePreparedReplyReturnsModelStatus(t *testing.T) {
+	responder := &fakeResponder{
+		modelState: codex.ModelState{
+			DefaultModel:           "gpt-5.3-codex",
+			EffectiveModel:         "gpt-5.4",
+			OverrideModel:          "gpt-5.4",
+			DefaultReasoningEffort: "medium",
+			ReasoningEffort:        "medium",
+			ReasoningOptions:       []codex.ReasoningEffortOption{{Effort: "low"}, {Effort: "medium"}, {Effort: "high"}},
+		},
+	}
+	workspaceSvc := &fakeWorkspaceService{}
+
+	prepared := &preparedReply{
+		modelCmd:        &modelcmd.Command{Action: "status"},
+		conversationKey: "conv-model",
+		userKey:         "ou_user",
+	}
+
+	got, err := handlePreparedReply(context.Background(), responder, &fakePrefetcher{}, workspaceSvc, nil, prepared)
+	if err != nil {
+		t.Fatalf("handlePreparedReply error: %v", err)
+	}
+	if responder.lastModelAction != "status" {
+		t.Fatalf("model action = %q, want status", responder.lastModelAction)
+	}
+	if workspaceSvc.lastAction != "" {
+		t.Fatalf("workspace action = %q, want none", workspaceSvc.lastAction)
+	}
+	if got == "" || !containsAll(got, "Model: gpt-5.4", "Default Model: gpt-5.3-codex", "Reasoning Options: low, medium, high") {
+		t.Fatalf("unexpected result: %q", got)
+	}
+}
+
+func TestHandlePreparedReplySetsModelThenAnswersQuestion(t *testing.T) {
+	ws := newWorkspaceFixture()
+	responder := &fakeResponder{
+		answer: "model answer",
+		setModelResult: codex.ModelChangeResult{
+			State: codex.ModelState{
+				DefaultModel:           "gpt-5.3-codex",
+				EffectiveModel:         "gpt-5.4",
+				OverrideModel:          "gpt-5.4",
+				DefaultReasoningEffort: "medium",
+				ReasoningEffort:        "medium",
+				ReasoningOptions:       []codex.ReasoningEffortOption{{Effort: "low"}, {Effort: "medium"}, {Effort: "high"}},
+			},
+			Changed: true,
+		},
+	}
+	prefetcher := &fakePrefetcher{passthrough: true}
+	workspaceSvc := &fakeWorkspaceService{ensureWS: ws}
+
+	prepared := &preparedReply{
+		question:        "analyze this query",
+		modelCmd:        &modelcmd.Command{Action: "set", Model: "gpt-5.4"},
+		conversationKey: "conv-model-set",
+		userKey:         "ou_user",
+	}
+
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
+	if err != nil {
+		t.Fatalf("handlePreparedReply error: %v", err)
+	}
+	if responder.lastModelAction != "set" || responder.lastModel != "gpt-5.4" {
+		t.Fatalf("unexpected model call action=%q model=%q", responder.lastModelAction, responder.lastModel)
+	}
+	if workspaceSvc.lastAction != "ensure" {
+		t.Fatalf("workspace action = %q, want ensure", workspaceSvc.lastAction)
+	}
+	if !containsAll(got, "Model: gpt-5.4", "Default Model: gpt-5.3-codex", "model answer") {
+		t.Fatalf("unexpected result: %q", got)
+	}
+	if strings.Contains(got, "the next question will start a new Codex session") {
+		t.Fatalf("unexpected session restart message: %q", got)
+	}
+}
+
+func TestHandlePreparedReplySetsReasoningEffortThenAnswersQuestion(t *testing.T) {
+	ws := newWorkspaceFixture()
+	responder := &fakeResponder{
+		answer: "effort answer",
+		setEffortResult: codex.ModelChangeResult{
+			State: codex.ModelState{
+				DefaultModel:            "gpt-5.3-codex",
+				EffectiveModel:          "gpt-5.3-codex",
+				DefaultReasoningEffort:  "medium",
+				OverrideReasoningEffort: "high",
+				ReasoningEffort:         "high",
+				ReasoningOptions:        []codex.ReasoningEffortOption{{Effort: "low"}, {Effort: "medium"}, {Effort: "high"}},
+			},
+			Changed: true,
+		},
+	}
+	prefetcher := &fakePrefetcher{passthrough: true}
+	workspaceSvc := &fakeWorkspaceService{ensureWS: ws}
+
+	prepared := &preparedReply{
+		question:        "analyze this query",
+		modelCmd:        &modelcmd.Command{Action: "effort", Effort: "high"},
+		conversationKey: "conv-effort-set",
+		userKey:         "ou_user",
+	}
+
+	got, err := handlePreparedReply(context.Background(), responder, prefetcher, workspaceSvc, nil, prepared)
+	if err != nil {
+		t.Fatalf("handlePreparedReply error: %v", err)
+	}
+	if responder.lastModelAction != "effort" || responder.lastEffort != "high" {
+		t.Fatalf("unexpected effort call action=%q effort=%q", responder.lastModelAction, responder.lastEffort)
+	}
+	if !containsAll(got, "Reasoning: high", "Default Reasoning: medium", "effort answer") {
+		t.Fatalf("unexpected result: %q", got)
 	}
 }
 
@@ -285,5 +593,16 @@ func runtimeContextEmpty(runtime codex.RuntimeContext) bool {
 		len(runtime.Attachment.Items) == 0 &&
 		runtime.ClinicLibrary == nil &&
 		runtime.Clinic == nil &&
+		runtime.Thread == nil &&
+		runtime.ThreadLoader == nil &&
 		runtime.Workspace == nil
+}
+
+func containsAll(s string, parts ...string) bool {
+	for _, part := range parts {
+		if !strings.Contains(s, part) {
+			return false
+		}
+	}
+	return true
 }
