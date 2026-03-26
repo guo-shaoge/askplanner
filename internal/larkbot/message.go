@@ -399,6 +399,13 @@ func extractChatID(event *larkim.P2MessageReceiveV1) string {
 	return trimPtr(event.Event.Message.ChatId)
 }
 
+func extractRootID(event *larkim.P2MessageReceiveV1) string {
+	if event == nil || event.Event == nil || event.Event.Message == nil {
+		return ""
+	}
+	return trimPtr(event.Event.Message.RootId)
+}
+
 func extractThreadID(event *larkim.P2MessageReceiveV1) string {
 	if event == nil || event.Event == nil || event.Event.Message == nil {
 		return ""
@@ -417,17 +424,32 @@ func extractEventCreateTime(event *larkim.P2MessageReceiveV1) time.Time {
 	return t
 }
 
-// buildConversationKey keeps one Codex conversation per user/thread or
-// user/chat pair so group threads do not leak context across participants.
+// buildConversationKey keeps one Codex conversation per user/root-message in
+// groups so the initial channel mention and later thread follow-ups share the
+// same context, while still isolating different users from each other.
 func buildConversationKey(event *larkim.P2MessageReceiveV1) string {
 	if event == nil || event.Event == nil {
 		return "lark:unknown"
 	}
 
+	rootID := extractRootID(event)
 	threadID := extractThreadID(event)
 	chatID := extractChatID(event)
 	senderID := sanitizePathSegment(extractPreferredSenderID(event), "")
 	messageID := extractMessageID(event)
+
+	if isGroupChat(event) {
+		anchorID := sanitizePathSegment(rootID, "")
+		if anchorID == "" && threadID == "" {
+			anchorID = sanitizePathSegment(messageID, "")
+		}
+		switch {
+		case anchorID != "" && senderID != "":
+			return "lark:root:" + anchorID + ":user:" + senderID
+		case anchorID != "":
+			return "lark:root:" + anchorID
+		}
+	}
 
 	switch {
 	case threadID != "" && senderID != "":

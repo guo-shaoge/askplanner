@@ -120,8 +120,8 @@ func TestShouldHandleEventAcceptsGroupPostMentioningBotWithoutMentionsField(t *t
 	}
 }
 
-func TestBuildConversationKeyUsesThreadAndUser(t *testing.T) {
-	threadID := "omt-thread"
+func TestBuildConversationKeyUsesGroupRootMessageAndUser(t *testing.T) {
+	chatType := "group"
 	chatID := "oc_chat"
 	openID := "ou_user"
 	messageID := "om_message"
@@ -129,7 +129,7 @@ func TestBuildConversationKeyUsesThreadAndUser(t *testing.T) {
 	event := &larkim.P2MessageReceiveV1{
 		Event: &larkim.P2MessageReceiveV1Data{
 			Message: &larkim.EventMessage{
-				ThreadId:  &threadID,
+				ChatType:  &chatType,
 				ChatId:    &chatID,
 				MessageId: &messageID,
 			},
@@ -141,7 +141,33 @@ func TestBuildConversationKeyUsesThreadAndUser(t *testing.T) {
 		},
 	}
 
-	if got := buildConversationKey(event); got != "lark:thread:omt-thread:user:ou_user" {
+	if got := buildConversationKey(event); got != "lark:root:om_message:user:ou_user" {
+		t.Fatalf("conversation key = %q", got)
+	}
+}
+
+func TestBuildConversationKeyUsesGroupRootIDInsideThread(t *testing.T) {
+	chatType := "group"
+	threadID := "omt-thread"
+	rootID := "om_root"
+	openID := "ou_user"
+
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatType: &chatType,
+				ThreadId: &threadID,
+				RootId:   &rootID,
+			},
+			Sender: &larkim.EventSender{
+				SenderId: &larkim.UserId{
+					OpenId: &openID,
+				},
+			},
+		},
+	}
+
+	if got := buildConversationKey(event); got != "lark:root:om_root:user:ou_user" {
 		t.Fatalf("conversation key = %q", got)
 	}
 }
@@ -150,7 +176,9 @@ func TestPrepareReplyHandlesWhoAmI(t *testing.T) {
 	msgType := "text"
 	content := `{"text":"/whoami"}`
 	openID := "ou_user"
+	chatType := "group"
 	threadID := "omt-thread"
+	rootID := "om_root"
 	messageID := "om_message"
 	manager, err := attachments.NewManager(t.TempDir(), 10)
 	if err != nil {
@@ -162,7 +190,9 @@ func TestPrepareReplyHandlesWhoAmI(t *testing.T) {
 			Message: &larkim.EventMessage{
 				MessageType: &msgType,
 				Content:     &content,
+				ChatType:    &chatType,
 				ThreadId:    &threadID,
+				RootId:      &rootID,
 				MessageId:   &messageID,
 			},
 			Sender: &larkim.EventSender{
@@ -183,7 +213,7 @@ func TestPrepareReplyHandlesWhoAmI(t *testing.T) {
 	if !strings.Contains(reply.directReply, "User Key: ou_user") {
 		t.Fatalf("reply missing user key: %s", reply.directReply)
 	}
-	if !strings.Contains(reply.directReply, "Conversation Key: lark:thread:omt-thread:user:ou_user") {
+	if !strings.Contains(reply.directReply, "Conversation Key: lark:root:om_root:user:ou_user") {
 		t.Fatalf("reply missing conversation key: %s", reply.directReply)
 	}
 }
