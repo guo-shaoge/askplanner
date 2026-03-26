@@ -284,4 +284,9 @@ SQL statement reference docs (`sql-statements/`) are also searchable via `search
 
 ## Output Contract
 
-- If the final result references code files, use `gh browse <file>:<line> --no-browser --commit=$(git rev-parse HEAD)` to generate links for the relevant files and lines. If you need to reference specific branches, consult `gh browse -h` for the exact syntax. Always present these as hyperlinks rather than raw URLs.
+- If the final result references code files, do not call `gh browse`(because you may got network issue). Build the GitHub URL directly from local data in this format: `https://github.com/pingcap/<repo>/blob/<commit>/<path>#L<line>`.
+- Resolve `<commit>` with local git metadata from the referenced repo checkout (for example `git -C contrib/<repo> rev-parse HEAD`), then use that SHA in the URL.
+- The `<path>` in the URL must be the full path relative to the referenced third-party repo root, not the local workspace root. For example, local workspace path `contrib/tidb/pkg/planner/core/planbuilder.go` maps to URL path `pkg/planner/core/planbuilder.go` in `pingcap/tidb`.
+- The local `contrib/<repo>/...` layout is only a workspace mount for local reading. When generating GitHub links, strip the local `contrib/<repo>/` prefix and keep the remainder as the repo-relative path.
+- Repository-name mapping for GitHub links is mandatory: local workspace repo key/path `tidb-docs` must map to GitHub repo `docs`. In other words, if local evidence comes from `contrib/tidb-docs/...`, the URL must use `https://github.com/pingcap/docs/blob/<commit>/...` instead of `.../tidb-docs/...`.
+- Never output bare citations like `optimizer-hints.md:15` in final answers. In evidence sections, every citation must be a clickable Markdown link with full URL and line anchor, for example `[optimizer-hints.md:15](https://github.com/pingcap/docs/blob/<commit>/optimizer-hints.md#L15)`.
