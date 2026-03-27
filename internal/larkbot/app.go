@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
@@ -22,31 +23,18 @@ import (
 	"lab/askplanner/internal/workspace"
 )
 
-// App owns the long-lived dependencies and websocket lifecycle for the Feishu
-// bot process.
+// App owns the long-lived shared services and the websocket supervisor for one
+// or more Feishu bot runtimes in the same process.
 type App struct {
-	appID       string
-	appSecret   string
-	apiClient   *lark.Client
-	responder   *codex.Responder
-	prefetcher  *clinic.Prefetcher
-	attachments *attachments.Manager
-	workspace   *workspace.Manager
-	tracker     *usage.QuestionTracker
-	dedup       *messageDedup
-	dedupMaxAge time.Duration
-	bot         botIdentity
+	shared        sharedServices
+	bots          []*botRuntime
+	clientFactory websocketClientFactory
 }
 
 // New constructs a fully wired Lark bot application from process config.
-// It validates the mandatory Feishu credentials up front so startup fails
-// before we open the websocket loop.
 func New(cfg *config.Config) (*App, error) {
-	if strings.TrimSpace(cfg.FeishuAppID) == "" || strings.TrimSpace(cfg.FeishuAppSecret) == "" {
+	if len(cfg.LarkBots) == 0 {
 		return nil, fmt.Errorf("FEISHU_APP_ID and FEISHU_APP_SECRET are required")
-	}
-	if strings.TrimSpace(cfg.FeishuBotName) == "" {
-		log.Printf("[larkbot] FEISHU_BOT_NAME is empty; group @ detection will rely on text_without_at_bot only")
 	}
 
 	responder, err := codex.NewResponder(cfg)
@@ -70,43 +58,94 @@ func New(cfg *config.Config) (*App, error) {
 		log.Printf("[larkbot] usage tracker disabled: %v", err)
 	}
 
-	apiClient := lark.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret, lark.WithLogLevel(larkcore.LogLevelInfo))
-	return &App{
-		appID:       cfg.FeishuAppID,
-		appSecret:   cfg.FeishuAppSecret,
-		apiClient:   apiClient,
-		responder:   responder,
-		prefetcher:  prefetcher,
-		attachments: attachmentManager,
-		workspace:   workspaceManager,
-		tracker:     tracker,
-		dedup:       &messageDedup{},
-		dedupMaxAge: time.Duration(cfg.FeishuDedupTimeoutInMin) * time.Minute,
-		bot:         botIdentity{name: cfg.FeishuBotName},
-	}, nil
+	app := &App{
+		shared: sharedServices{
+			responder:   responder,
+			prefetcher:  prefetcher,
+			attachments: attachmentManager,
+			workspace:   workspaceManager,
+			tracker:     tracker,
+		},
+		clientFactory: defaultWebsocketClientFactory,
+	}
+
+	bots := make([]*botRuntime, 0, len(cfg.LarkBots))
+	for _, botCfg := range cfg.LarkBots {
+		if strings.TrimSpace(botCfg.BotName) == "" {
+			log.Printf("[larkbot:%s] FEISHU_BOT_NAME is empty; group @ detection will rely on text_without_at_bot only", botCfg.Key)
+		}
+		runtime := &botRuntime{
+			parent:      app,
+			cfg:         botCfg,
+			apiClient:   lark.NewClient(botCfg.AppID, botCfg.AppSecret, lark.WithLogLevel(larkcore.LogLevelInfo)),
+			dedup:       &messageDedup{},
+			dedupMaxAge: time.Duration(cfg.FeishuDedupTimeoutInMin) * time.Minute,
+			bot: botIdentity{
+				key:  botCfg.Key,
+				name: strings.ToLower(strings.TrimSpace(botCfg.BotName)),
+			},
+		}
+		runtime.client = app.clientFactory(botCfg.AppID, botCfg.AppSecret, runtime.newEventHandler())
+		bots = append(bots, runtime)
+	}
+	app.bots = bots
+	return app, nil
 }
 
-// Run starts background maintenance and blocks on the Feishu websocket client
-// until the context is canceled or the client exits with an error.
+func defaultWebsocketClientFactory(appID, appSecret string, handler *dispatcher.EventDispatcher) websocketClient {
+	return larkws.NewClient(appID, appSecret,
+		larkws.WithEventHandler(handler),
+		larkws.WithLogLevel(larkcore.LogLevelInfo),
+	)
+}
+
+// Run starts shared background maintenance and blocks until any bot exits with
+// an error or the context is canceled.
 func (a *App) Run(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	a.workspace.StartBackgroundJobs(ctx)
-	a.startDedupCleanup(ctx)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	cli := larkws.NewClient(a.appID, a.appSecret,
-		larkws.WithEventHandler(a.newEventHandler()),
-		larkws.WithLogLevel(larkcore.LogLevelInfo),
-	)
+	a.shared.workspace.StartBackgroundJobs(runCtx)
 
-	log.Printf("[larkbot] starting websocket client...")
-	return cli.Start(ctx)
+	errCh := make(chan error, len(a.bots))
+	var wg sync.WaitGroup
+	for _, bot := range a.bots {
+		bot.startDedupCleanup(runCtx)
+		wg.Add(1)
+		go func(bot *botRuntime) {
+			defer wg.Done()
+			log.Printf("%s starting websocket client...", bot.bot.prefix())
+			if err := bot.client.Start(runCtx); err != nil && runCtx.Err() == nil {
+				select {
+				case errCh <- fmt.Errorf("%s websocket client failed: %w", bot.bot.prefix(), err):
+				default:
+				}
+				cancel()
+			}
+		}(bot)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errCh:
+		<-done
+		return err
+	case <-done:
+		return runCtx.Err()
+	}
 }
 
-func (a *App) startDedupCleanup(ctx context.Context) {
-	if a.dedupMaxAge <= 0 {
+func (b *botRuntime) startDedupCleanup(ctx context.Context) {
+	if b.dedupMaxAge <= 0 {
 		return
 	}
 	go func() {
@@ -117,37 +156,35 @@ func (a *App) startDedupCleanup(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				a.dedup.cleanup(a.dedupMaxAge)
+				b.dedup.cleanup(b.dedupMaxAge)
 			}
 		}
 	}()
 }
 
-func (a *App) newEventHandler() *dispatcher.EventDispatcher {
+func (b *botRuntime) newEventHandler() *dispatcher.EventDispatcher {
 	return dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
-			log.Printf("[larkbot] message received: %s", larkcore.Prettify(event))
+			log.Printf("%s message received: %s", b.bot.prefix(), larkcore.Prettify(event))
 
 			messageID := extractMessageID(event)
 			if messageID == "" {
-				log.Printf("[larkbot] skip: empty message_id")
+				log.Printf("%s skip: empty message_id", b.bot.prefix())
 				return nil
 			}
-			if a.dedup.isDuplicate(messageID) {
-				log.Printf("[larkbot] skip duplicate message_id=%s", messageID)
+			if b.dedup.isDuplicate(messageID) {
+				log.Printf("%s skip duplicate message_id=%s", b.bot.prefix(), messageID)
 				return nil
 			}
-			if ok, reason := shouldHandleEvent(event, a.bot); !ok {
-				log.Printf("[larkbot] skip message_id=%s: %s", messageID, reason)
+			if ok, reason := shouldHandleEvent(event, b.bot); !ok {
+				log.Printf("%s skip message_id=%s: %s", b.bot.prefix(), messageID, reason)
 				return nil
 			}
 
-			// Keep the SDK callback small: convert every accepted message into the
-			// same answer pipeline and always reply from one place.
-			return withTypingReaction(ctx, a.apiClient, messageID, func() error {
-				answer, replyOpts, err := a.answerEvent(ctx, event)
+			return withTypingReaction(ctx, b.apiClient, messageID, func() error {
+				answer, replyOpts, err := b.answerEvent(ctx, event)
 				if err != nil {
-					log.Printf("[larkbot] handle event error: %v (message_id=%s)", err, messageID)
+					log.Printf("%s handle event error: %v (message_id=%s)", b.bot.prefix(), err, messageID)
 					answer = usererr.OrDefault(err, "Agent couldn't process that request. Please retry. If it keeps failing, check the relay logs.")
 				}
 
@@ -155,7 +192,7 @@ func (a *App) newEventHandler() *dispatcher.EventDispatcher {
 				if err != nil {
 					return fmt.Errorf("build reply body: %w", err)
 				}
-				if err := replyMessage(ctx, a.apiClient, messageID, reply, replyOpts); err != nil {
+				if err := replyMessage(ctx, b.apiClient, messageID, reply, replyOpts); err != nil {
 					return fmt.Errorf("reply message: %w", err)
 				}
 				return nil

@@ -28,6 +28,9 @@ func resolveConversationRoute(event *larkim.P2MessageReceiveV1, preferred string
 	}
 
 	legacy := buildLegacyConversationKey(event)
+	if strings.HasPrefix(strings.TrimSpace(preferred), "larkbot:") {
+		return route
+	}
 	if strings.TrimSpace(preferred) == "" || legacy == "" || legacy == preferred || resolver == nil {
 		return route
 	}
