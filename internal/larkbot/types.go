@@ -2,11 +2,19 @@ package larkbot
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	lark "github.com/larksuite/oapi-sdk-go/v3"
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+
+	"lab/askplanner/internal/attachments"
+	"lab/askplanner/internal/clinic"
 	"lab/askplanner/internal/codex"
+	"lab/askplanner/internal/config"
 	"lab/askplanner/internal/modelcmd"
+	"lab/askplanner/internal/usage"
 	"lab/askplanner/internal/workspace"
 )
 
@@ -22,7 +30,37 @@ const (
 )
 
 type botIdentity struct {
+	key  string
 	name string
+}
+
+func (b botIdentity) prefix() string {
+	key := sanitizePathSegment(b.key, "default")
+	return fmt.Sprintf("[larkbot:%s]", key)
+}
+
+type websocketClient interface {
+	Start(ctx context.Context) error
+}
+
+type websocketClientFactory func(appID, appSecret string, handler *dispatcher.EventDispatcher) websocketClient
+
+type botRuntime struct {
+	parent      *App
+	cfg         config.LarkBotConfig
+	apiClient   *lark.Client
+	dedup       *messageDedup
+	bot         botIdentity
+	client      websocketClient
+	dedupMaxAge time.Duration
+}
+
+type sharedServices struct {
+	responder   *codex.Responder
+	prefetcher  *clinic.Prefetcher
+	attachments *attachments.Manager
+	workspace   *workspace.Manager
+	tracker     *usage.QuestionTracker
 }
 
 type messageDedup struct {

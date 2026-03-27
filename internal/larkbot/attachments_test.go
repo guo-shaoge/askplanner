@@ -50,7 +50,7 @@ func TestPrepareReplyRejectsInvalidUploadCommand(t *testing.T) {
 		},
 	}
 
-	_, err := prepareReply(context.Background(), nil, nil, event)
+	_, err := prepareReply(context.Background(), nil, nil, event, botIdentity{key: "bot-a"})
 	if got := usererr.Message(err); !strings.Contains(got, "Invalid upload command") {
 		t.Fatalf("user-facing message = %q", got)
 	}

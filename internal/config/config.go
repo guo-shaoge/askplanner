@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	_ "io"
 	"log"
@@ -52,12 +53,20 @@ type Config struct {
 	UsageQuestionsPath string
 
 	// Lark (larkbot only)
+	LarkBots                []LarkBotConfig
 	FeishuAppID             string
 	FeishuAppSecret         string
 	FeishuBotName           string
 	FeishuDedupTimeoutInMin int
 	FeishuFileDir           string // absolute path
 	FeishuUserFileMaxItems  int
+}
+
+type LarkBotConfig struct {
+	Key       string `json:"key"`
+	AppID     string `json:"app_id"`
+	AppSecret string `json:"app_secret"`
+	BotName   string `json:"bot_name,omitempty"`
 }
 
 func Load() (*Config, error) {
@@ -70,7 +79,7 @@ func Load() (*Config, error) {
 	clinicStoreDir := envOrDefault("CLINIC_STORE_DIR", filepath.Join(workspaceRoot, "clinic"))
 	feishuFileDir := envOrDefault("FEISHU_FILE_DIR", filepath.Join(workspaceRoot, "uploads"))
 
-	return &Config{
+	cfg := &Config{
 		ProjectRoot:                       projectRoot,
 		PromptFile:                        resolvePath(projectRoot, envOrDefault("PROMPT_FILE", "prompt")),
 		CodexBin:                          envOrDefault("CODEX_BIN", "codex"),
@@ -106,7 +115,14 @@ func Load() (*Config, error) {
 		FeishuDedupTimeoutInMin:           envAsInt("FEISHU_DEDUP_MESSAGE_TIMEOUT_IN_MIN", 3600),
 		FeishuFileDir:                     resolvePath(projectRoot, feishuFileDir),
 		FeishuUserFileMaxItems:            envAsInt("FEISHU_USER_FILE_MAX_ITEMS", 100),
-	}, nil
+	}
+
+	larkBots, err := loadLarkBots(cfg)
+	if err != nil {
+		return nil, err
+	}
+	cfg.LarkBots = larkBots
+	return cfg, nil
 }
 
 func detectProjectRoot() (string, error) {
@@ -177,6 +193,84 @@ func SetupLogging(logFile string) (*os.File, error) {
 	log.SetOutput(f)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 	return f, nil
+}
+
+func loadLarkBots(cfg *Config) ([]LarkBotConfig, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+
+	raw := strings.TrimSpace(os.Getenv("FEISHU_BOTS_JSON"))
+	if raw == "" {
+		bot := LarkBotConfig{
+			Key:       sanitizeConfigKey(cfg.FeishuAppID),
+			AppID:     strings.TrimSpace(cfg.FeishuAppID),
+			AppSecret: strings.TrimSpace(cfg.FeishuAppSecret),
+			BotName:   strings.TrimSpace(cfg.FeishuBotName),
+		}
+		if bot.AppID == "" || bot.AppSecret == "" {
+			return nil, nil
+		}
+		return []LarkBotConfig{bot}, nil
+	}
+
+	var bots []LarkBotConfig
+	if err := json.Unmarshal([]byte(raw), &bots); err != nil {
+		return nil, fmt.Errorf("parse FEISHU_BOTS_JSON: %w", err)
+	}
+	if len(bots) == 0 {
+		return nil, fmt.Errorf("FEISHU_BOTS_JSON is empty")
+	}
+
+	seen := make(map[string]struct{}, len(bots))
+	for i := range bots {
+		bot := &bots[i]
+		bot.AppID = strings.TrimSpace(bot.AppID)
+		bot.AppSecret = strings.TrimSpace(bot.AppSecret)
+		bot.BotName = strings.TrimSpace(bot.BotName)
+		if bot.BotName == "" {
+			bot.BotName = strings.TrimSpace(cfg.FeishuBotName)
+		}
+		bot.Key = sanitizeConfigKey(bot.Key)
+		if bot.Key == "" {
+			bot.Key = sanitizeConfigKey(bot.AppID)
+		}
+		if bot.Key == "" {
+			return nil, fmt.Errorf("FEISHU_BOTS_JSON[%d] key is empty", i)
+		}
+		if bot.AppID == "" || bot.AppSecret == "" {
+			return nil, fmt.Errorf("FEISHU_BOTS_JSON[%d] requires app_id and app_secret", i)
+		}
+		if _, ok := seen[bot.Key]; ok {
+			return nil, fmt.Errorf("FEISHU_BOTS_JSON contains duplicate key: %s", bot.Key)
+		}
+		seen[bot.Key] = struct{}{}
+	}
+	return bots, nil
+}
+
+func sanitizeConfigKey(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + ('a' - 'A'))
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(b.String(), "._-")
 }
 
 func resolvePath(projectRoot, path string) string {

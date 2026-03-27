@@ -32,7 +32,7 @@ func TestPrepareReplyExtractsPostMessagePreservingLayout(t *testing.T) {
 		},
 	}
 
-	reply, err := prepareReply(context.Background(), nil, manager, event)
+	reply, err := prepareReply(context.Background(), nil, manager, event, botIdentity{key: "bot-a"})
 	if err != nil {
 		t.Fatalf("prepareReply returned error: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestBuildConversationKeyUsesGroupRootMessageAndUser(t *testing.T) {
 		},
 	}
 
-	if got := buildConversationKey(event); got != "lark:root:om_message:user:ou_user" {
+	if got := buildConversationKey(event, botIdentity{key: "bot-a"}); got != "larkbot:bot-a:root:om_message:user:larkbot_bot-a_ou_user" {
 		t.Fatalf("conversation key = %q", got)
 	}
 }
@@ -167,7 +167,7 @@ func TestBuildConversationKeyUsesGroupRootIDInsideThread(t *testing.T) {
 		},
 	}
 
-	if got := buildConversationKey(event); got != "lark:root:om_root:user:ou_user" {
+	if got := buildConversationKey(event, botIdentity{key: "bot-a"}); got != "larkbot:bot-a:root:om_root:user:larkbot_bot-a_ou_user" {
 		t.Fatalf("conversation key = %q", got)
 	}
 }
@@ -203,17 +203,17 @@ func TestPrepareReplyHandlesWhoAmI(t *testing.T) {
 		},
 	}
 
-	reply, err := prepareReply(context.Background(), nil, manager, event)
+	reply, err := prepareReply(context.Background(), nil, manager, event, botIdentity{key: "bot-a"})
 	if err != nil {
 		t.Fatalf("prepareReply returned error: %v", err)
 	}
 	if !reply.skipCodex {
 		t.Fatalf("expected /whoami to skip codex")
 	}
-	if !strings.Contains(reply.directReply, "User Key: ou_user") {
+	if !strings.Contains(reply.directReply, "User Key: larkbot:bot-a:ou_user") {
 		t.Fatalf("reply missing user key: %s", reply.directReply)
 	}
-	if !strings.Contains(reply.directReply, "Conversation Key: lark:root:om_root:user:ou_user") {
+	if !strings.Contains(reply.directReply, "Conversation Key: larkbot:bot-a:root:om_root:user:larkbot_bot-a_ou_user") {
 		t.Fatalf("reply missing conversation key: %s", reply.directReply)
 	}
 }

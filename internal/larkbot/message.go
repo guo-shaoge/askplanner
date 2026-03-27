@@ -388,6 +388,19 @@ func extractPreferredSenderID(event *larkim.P2MessageReceiveV1) string {
 	return ""
 }
 
+func buildScopedUserKey(event *larkim.P2MessageReceiveV1, bot botIdentity) string {
+	raw := sanitizePathSegment(extractPreferredSenderID(event), "")
+	botKey := sanitizePathSegment(bot.key, "")
+	switch {
+	case botKey != "" && raw != "":
+		return "larkbot:" + botKey + ":" + raw
+	case raw != "":
+		return raw
+	default:
+		return ""
+	}
+}
+
 func trimUserID(s *string) string {
 	return trimPtr(s)
 }
@@ -427,7 +440,7 @@ func extractEventCreateTime(event *larkim.P2MessageReceiveV1) time.Time {
 // buildConversationKey keeps one Codex conversation per user/root-message in
 // groups so the initial channel mention and later thread follow-ups share the
 // same context, while still isolating different users from each other.
-func buildConversationKey(event *larkim.P2MessageReceiveV1) string {
+func buildConversationKey(event *larkim.P2MessageReceiveV1, bot botIdentity) string {
 	if event == nil || event.Event == nil {
 		return "lark:unknown"
 	}
@@ -435,8 +448,12 @@ func buildConversationKey(event *larkim.P2MessageReceiveV1) string {
 	rootID := extractRootID(event)
 	threadID := extractThreadID(event)
 	chatID := extractChatID(event)
-	senderID := sanitizePathSegment(extractPreferredSenderID(event), "")
+	senderID := sanitizePathSegment(buildScopedUserKey(event, bot), "")
 	messageID := extractMessageID(event)
+	prefix := "lark"
+	if botKey := sanitizePathSegment(bot.key, ""); botKey != "" {
+		prefix = "larkbot:" + botKey
+	}
 
 	if isGroupChat(event) {
 		anchorID := sanitizePathSegment(rootID, "")
@@ -445,24 +462,24 @@ func buildConversationKey(event *larkim.P2MessageReceiveV1) string {
 		}
 		switch {
 		case anchorID != "" && senderID != "":
-			return "lark:root:" + anchorID + ":user:" + senderID
+			return prefix + ":root:" + anchorID + ":user:" + senderID
 		case anchorID != "":
-			return "lark:root:" + anchorID
+			return prefix + ":root:" + anchorID
 		}
 	}
 
 	switch {
 	case threadID != "" && senderID != "":
-		return "lark:thread:" + threadID + ":user:" + senderID
+		return prefix + ":thread:" + threadID + ":user:" + senderID
 	case chatID != "" && senderID != "":
-		return "lark:chat:" + chatID + ":user:" + senderID
+		return prefix + ":chat:" + chatID + ":user:" + senderID
 	case threadID != "":
-		return "lark:thread:" + threadID
+		return prefix + ":thread:" + threadID
 	case chatID != "":
-		return "lark:chat:" + chatID
+		return prefix + ":chat:" + chatID
 	case messageID != "":
-		return "lark:message:" + messageID
+		return prefix + ":message:" + messageID
 	default:
-		return "lark:unknown"
+		return prefix + ":unknown"
 	}
 }
