@@ -489,6 +489,8 @@ func classifyClinicFetchError(err error) error {
 		return usererr.Wrap(usererr.KindTimeout, "Clinic slow query fetch timed out. Please retry.", err)
 	case hasNetworkError(err), containsClinicErrorText(lower, "dial tcp", "connection refused", "connection reset", "no such host", "network is unreachable", "temporary failure in name resolution"):
 		return usererr.Wrap(usererr.KindNetwork, "Clinic could not be reached because of a network problem. Please retry.", err)
+	case containsClinicErrorText(lower, "datasource_not_configured", "does not have slow_query data source configured", "specify datasource manually"):
+		return usererr.Wrap(usererr.KindUnavailable, "This Clinic cluster does not expose a usable slow query data source through the relay API yet, so askplanner cannot prefetch this slow query link.", err)
 	case containsClinicErrorText(lower, "status 500", "status 502", "status 503", "status 504"):
 		return usererr.Wrap(usererr.KindUnavailable, "Clinic is temporarily unavailable. Please retry.", err)
 	default:

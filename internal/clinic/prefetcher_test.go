@@ -58,6 +58,13 @@ func TestClassifyClinicFetchErrorRateLimit(t *testing.T) {
 	}
 }
 
+func TestClassifyClinicFetchErrorDatasourceNotConfigured(t *testing.T) {
+	err := classifyClinicFetchError(errors.New(`query data proxy: {"error":{"code":"DATASOURCE_NOT_CONFIGURED","message":"cluster 123 does not have SLOW_QUERY data source configured, please specify datasource manually"},"success":false}`))
+	if got := UserFacingMessage(err); got != "This Clinic cluster does not expose a usable slow query data source through the relay API yet, so askplanner cannot prefetch this slow query link." {
+		t.Fatalf("user-facing message = %q", got)
+	}
+}
+
 func TestBuildIntroReplyUnsavedDoesNotClaimSaved(t *testing.T) {
 	reply := buildIntroReply(codex.RuntimeContext{
 		Clinic: &codex.ClinicContext{
