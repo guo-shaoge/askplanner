@@ -43,7 +43,7 @@ func maybeBuildThreadContext(ctx context.Context, apiClient *lark.Client, event 
 			req.PageToken(pageToken)
 		}
 
-		resp, err := apiClient.Im.V1.Message.List(ctx, req.Build())
+		resp, err := apiClient.Im.Message.List(ctx, req.Build())
 		if err != nil {
 			return nil, fmt.Errorf("list thread messages: %w", err)
 		}
@@ -191,7 +191,7 @@ func maybeBuildThreadContext(ctx context.Context, apiClient *lark.Client, event 
 }
 
 func getThreadMessage(ctx context.Context, apiClient *lark.Client, messageID string) (*larkim.Message, error) {
-	resp, err := apiClient.Im.V1.Message.Get(ctx, larkim.NewGetMessageReqBuilder().
+	resp, err := apiClient.Im.Message.Get(ctx, larkim.NewGetMessageReqBuilder().
 		MessageId(messageID).
 		Build())
 	if err != nil {

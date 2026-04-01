@@ -27,6 +27,10 @@ type Collector struct {
 	now              func() time.Time
 }
 
+func closeQuietly(closer io.Closer) {
+	_ = closer.Close()
+}
+
 type Snapshot struct {
 	GeneratedAt             time.Time          `json:"generated_at"`
 	Summary                 Summary            `json:"summary"`
@@ -674,7 +678,7 @@ func readTailLines(path string, tailBytes int64) ([]string, error) {
 		}
 		return nil, fmt.Errorf("open log file: %w", err)
 	}
-	defer file.Close()
+	defer closeQuietly(file)
 
 	info, err := file.Stat()
 	if err != nil {

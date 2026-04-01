@@ -1,3 +1,5 @@
+GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
+
 all: cli larkbot usage
 
 cli:
@@ -11,9 +13,12 @@ usage:
 	go build -o bin/askplanner_usage ./cmd/askplanner_usage
 
 clean:
-	rm -f bin/askplanner_cli bin/askplanner_larkbot bin/askplanner_usage
+	rm -f bin/askplanner_cli bin/askplanner_larkbot bin/askplanner_larkbot_staging bin/askplanner_usage
 
 fmt:
 	go fmt ./...
 
-.PHONY: all cli larkbot usage clean fmt
+lint:
+	$(GOLANGCI_LINT) run ./...
+
+.PHONY: all cli larkbot usage clean fmt lint

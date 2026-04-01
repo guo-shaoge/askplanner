@@ -123,16 +123,16 @@ func (r *Responder) AnswerWithContext(ctx context.Context, conversationKey, ques
 	}
 
 	record = SessionRecord{
-		ConversationKey: conversationKey,
-		UserKey:         strings.TrimSpace(runtime.UserKey),
-		SessionID:       result.SessionID,
-		PromptHash:      r.promptHash,
-		WorkDir:         workDir,
-		EnvironmentHash: envHash,
-		CreatedAt:       now,
-		LastActiveAt:    now,
-		PendingNotice:   nil,
-		TurnCount:       1,
+		ConversationKey:         conversationKey,
+		UserKey:                 strings.TrimSpace(runtime.UserKey),
+		SessionID:               result.SessionID,
+		PromptHash:              r.promptHash,
+		WorkDir:                 workDir,
+		EnvironmentHash:         envHash,
+		CreatedAt:               now,
+		LastActiveAt:            now,
+		PendingNotice:           nil,
+		TurnCount:               1,
 		ModelOverride:           record.ModelOverride,
 		ReasoningEffortOverride: record.ReasoningEffortOverride,
 		Turns: []Turn{{

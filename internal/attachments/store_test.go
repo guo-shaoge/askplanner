@@ -240,7 +240,9 @@ func makeZip(t *testing.T, path string, files map[string]string) {
 	if err != nil {
 		t.Fatalf("Create zip: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	w := zip.NewWriter(f)
 	for name, content := range files {

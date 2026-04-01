@@ -198,9 +198,13 @@ func TestPrefetcherReturnsIntroReplyForNewClinicLink(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/clinic/api/v1/dashboard/clusters":
-			io.WriteString(w, `{"items":[{"clusterID":"123","clusterName":"prod-a","tenantName":"Acme","clusterDeployTypeV2":"premium"}]}`)
+			if _, err := io.WriteString(w, `{"items":[{"clusterID":"123","clusterName":"prod-a","tenantName":"Acme","clusterDeployTypeV2":"premium"}]}`); err != nil {
+				t.Fatalf("write clusters response: %v", err)
+			}
 		case r.Method == http.MethodPost && r.URL.Path == "/data-proxy/query":
-			io.WriteString(w, `{"columns":["time","digest","plan_digest","query_time","parse_time","compile_time","cop_time","process_time","wait_time","total_keys","process_keys","result_rows","mem_max","disk_max","db","instance","index_names","prev_stmt","plan","decoded_plan","binary_plan","query"],"rows":[[1773973859.727374,"digest-1","plan-digest-1",7.5,0.1,0.2,2.5,1.5,0.3,1000,800,10,2048,0,"app","tidb-0","idx_a","begin","IndexLookUp_1 root 10.00","IndexLookUp(Build)","binary-plan-text","select * from t where a = 1"]]}`)
+			if _, err := io.WriteString(w, `{"columns":["time","digest","plan_digest","query_time","parse_time","compile_time","cop_time","process_time","wait_time","total_keys","process_keys","result_rows","mem_max","disk_max","db","instance","index_names","prev_stmt","plan","decoded_plan","binary_plan","query"],"rows":[[1773973859.727374,"digest-1","plan-digest-1",7.5,0.1,0.2,2.5,1.5,0.3,1000,800,10,2048,0,"app","tidb-0","idx_a","begin","IndexLookUp_1 root 10.00","IndexLookUp(Build)","binary-plan-text","select * from t where a = 1"]]}`); err != nil {
+				t.Fatalf("write detail response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -238,9 +242,13 @@ func TestPrefetcherSkipsIntroReplyWhenQuestionIncludesAnalysisIntent(t *testing.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/clinic/api/v1/dashboard/clusters":
-			io.WriteString(w, `{"items":[{"clusterID":"123","clusterName":"prod-a","tenantName":"Acme","clusterDeployTypeV2":"premium"}]}`)
+			if _, err := io.WriteString(w, `{"items":[{"clusterID":"123","clusterName":"prod-a","tenantName":"Acme","clusterDeployTypeV2":"premium"}]}`); err != nil {
+				t.Fatalf("write clusters response: %v", err)
+			}
 		case r.Method == http.MethodPost && r.URL.Path == "/data-proxy/query":
-			io.WriteString(w, `{"columns":["time","digest","plan_digest","query_time","parse_time","compile_time","cop_time","process_time","wait_time","total_keys","process_keys","result_rows","mem_max","disk_max","db","instance","index_names","prev_stmt","plan","decoded_plan","binary_plan","query"],"rows":[[1773973859.727374,"digest-1","plan-digest-1",7.5,0.1,0.2,2.5,1.5,0.3,1000,800,10,2048,0,"app","tidb-0","idx_a","begin","IndexLookUp_1 root 10.00","IndexLookUp(Build)","binary-plan-text","select * from t where a = 1"]]}`)
+			if _, err := io.WriteString(w, `{"columns":["time","digest","plan_digest","query_time","parse_time","compile_time","cop_time","process_time","wait_time","total_keys","process_keys","result_rows","mem_max","disk_max","db","instance","index_names","prev_stmt","plan","decoded_plan","binary_plan","query"],"rows":[[1773973859.727374,"digest-1","plan-digest-1",7.5,0.1,0.2,2.5,1.5,0.3,1000,800,10,2048,0,"app","tidb-0","idx_a","begin","IndexLookUp_1 root 10.00","IndexLookUp(Build)","binary-plan-text","select * from t where a = 1"]]}`); err != nil {
+				t.Fatalf("write detail response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}

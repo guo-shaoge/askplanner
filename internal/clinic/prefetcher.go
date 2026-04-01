@@ -450,11 +450,11 @@ func buildIntroReply(runtime codex.RuntimeContext, saved bool) string {
 		}
 		sb.WriteByte('\n')
 	}
-	sb.WriteString(fmt.Sprintf("- Summary: total_queries=%d avg_query_time_sec=%.6f max_query_time_sec=%.6f\n",
+	_, _ = fmt.Fprintf(&sb, "- Summary: total_queries=%d avg_query_time_sec=%.6f max_query_time_sec=%.6f\n",
 		clinic.Summary.TotalQueries,
 		clinic.Summary.AvgQueryTime,
 		clinic.Summary.MaxQueryTime,
-	))
+	)
 	if saved && runtime.ClinicLibrary != nil && runtime.ClinicLibrary.ActiveItemName != "" {
 		sb.WriteString("- Saved Entry: ")
 		sb.WriteString(runtime.ClinicLibrary.ActiveItemName)

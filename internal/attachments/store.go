@@ -258,14 +258,18 @@ func copyFileAtomically(sourcePath, targetPath string) error {
 		return err
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	defer func() {
+		_ = os.Remove(tmpPath)
+	}()
 
 	src, err := os.Open(sourcePath)
 	if err != nil {
 		_ = tmpFile.Close()
 		return err
 	}
-	defer src.Close()
+	defer func() {
+		_ = src.Close()
+	}()
 
 	if _, err := io.Copy(tmpFile, src); err != nil {
 		_ = tmpFile.Close()
@@ -285,13 +289,17 @@ func extractZipAtomically(sourcePath, targetPath string) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		_ = os.RemoveAll(tempDir)
+	}()
 
 	reader, err := zip.OpenReader(sourcePath)
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
+	defer func() {
+		_ = reader.Close()
+	}()
 
 	for _, file := range reader.File {
 		name := filepath.Clean(file.Name)
@@ -317,16 +325,16 @@ func extractZipAtomically(sourcePath, targetPath string) error {
 		}
 		dst, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, file.Mode())
 		if err != nil {
-			src.Close()
+			_ = src.Close()
 			return err
 		}
 		if _, err := io.Copy(dst, src); err != nil {
-			dst.Close()
-			src.Close()
+			_ = dst.Close()
+			_ = src.Close()
 			return err
 		}
 		if err := dst.Close(); err != nil {
-			src.Close()
+			_ = src.Close()
 			return err
 		}
 		if err := src.Close(); err != nil {
@@ -457,7 +465,9 @@ func saveManifest(userDir string, items []Item) error {
 		return fmt.Errorf("create attachment manifest temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	defer func() {
+		_ = os.Remove(tmpPath)
+	}()
 	if _, err := tmpFile.Write(data); err != nil {
 		_ = tmpFile.Close()
 		return fmt.Errorf("write attachment manifest: %w", err)

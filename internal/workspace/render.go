@@ -65,7 +65,7 @@ func FormatStatus(w *Workspace) string {
 	sb.WriteByte('\n')
 	sb.WriteString("- Repos:\n")
 	for _, repo := range w.Repos {
-		sb.WriteString(fmt.Sprintf("  - %s ref=%s sha=%s", repo.RelativePath, repo.RequestedRef, shortSHA(repo.ResolvedSHA)))
+		_, _ = fmt.Fprintf(&sb, "  - %s ref=%s sha=%s", repo.RelativePath, repo.RequestedRef, shortSHA(repo.ResolvedSHA))
 		if repo.TrackingLatest {
 			sb.WriteString(" tracking=latest")
 		}

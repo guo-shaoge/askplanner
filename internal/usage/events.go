@@ -159,7 +159,7 @@ func (s *QuestionStore) LoadAll() ([]QuestionEvent, error) {
 		}
 		return nil, fmt.Errorf("open question store: %w", err)
 	}
-	defer file.Close()
+	defer closeQuietly(file)
 
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 1024*1024)
@@ -215,7 +215,7 @@ func (s *QuestionStore) Append(event QuestionEvent) error {
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
+	defer closeQuietly(lock)
 
 	existing, err := s.loadAllNoLock()
 	if err != nil {
@@ -234,7 +234,7 @@ func (s *QuestionStore) Append(event QuestionEvent) error {
 	if err != nil {
 		return fmt.Errorf("open question store for append: %w", err)
 	}
-	defer f.Close()
+	defer closeQuietly(f)
 
 	data, err := json.Marshal(event)
 	if err != nil {
@@ -254,7 +254,7 @@ func (s *QuestionStore) BackfillFromSessions() error {
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
+	defer closeQuietly(lock)
 
 	sessions, err := loadSessionRecords(s.sessionStore)
 	if err != nil {
@@ -317,7 +317,7 @@ func (s *QuestionStore) BackfillFromSessions() error {
 	if err != nil {
 		return fmt.Errorf("open question store for backfill: %w", err)
 	}
-	defer f.Close()
+	defer closeQuietly(f)
 
 	for _, event := range toAppend {
 		data, err := json.Marshal(event)
@@ -339,7 +339,7 @@ func (s *QuestionStore) loadAllNoLock() ([]QuestionEvent, error) {
 		}
 		return nil, fmt.Errorf("open question store: %w", err)
 	}
-	defer file.Close()
+	defer closeQuietly(file)
 
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 1024*1024)

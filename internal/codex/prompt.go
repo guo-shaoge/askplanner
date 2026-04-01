@@ -344,14 +344,14 @@ func writeClinicContext(sb *strings.Builder, clinic *ClinicContext) {
 		sb.WriteByte('\n')
 	}
 	sb.WriteString("- Clinic aggregate slow query stats:")
-	sb.WriteString(fmt.Sprintf(" total_queries=%d", clinic.Summary.TotalQueries))
+	_, _ = fmt.Fprintf(sb, " total_queries=%d", clinic.Summary.TotalQueries)
 	if clinic.Summary.UniqueDigests > 0 {
-		sb.WriteString(fmt.Sprintf(" unique_digests=%d", clinic.Summary.UniqueDigests))
+		_, _ = fmt.Fprintf(sb, " unique_digests=%d", clinic.Summary.UniqueDigests)
 	}
-	sb.WriteString(fmt.Sprintf(" avg_query_time_sec=%.6f max_query_time_sec=%.6f\n",
+	_, _ = fmt.Fprintf(sb, " avg_query_time_sec=%.6f max_query_time_sec=%.6f\n",
 		clinic.Summary.AvgQueryTime,
 		clinic.Summary.MaxQueryTime,
-	))
+	)
 	if clinic.NoRows {
 		sb.WriteString("- Clinic query returned no slow query rows for this exact scope.\n")
 		return
@@ -360,7 +360,7 @@ func writeClinicContext(sb *strings.Builder, clinic *ClinicContext) {
 		sb.WriteString("- Clinic slow-query detail rows:\n")
 		for _, row := range clinic.DetailRows {
 			sb.WriteString("  - ")
-			sb.WriteString(fmt.Sprintf("time_unix=%.6f digest=%s query_time_sec=%.6f parse_sec=%.6f compile_sec=%.6f cop_sec=%.6f process_sec=%.6f wait_sec=%.6f",
+			_, _ = fmt.Fprintf(sb, "time_unix=%.6f digest=%s query_time_sec=%.6f parse_sec=%.6f compile_sec=%.6f cop_sec=%.6f process_sec=%.6f wait_sec=%.6f",
 				row.TimeUnix,
 				row.Digest,
 				row.QueryTime,
@@ -369,21 +369,21 @@ func writeClinicContext(sb *strings.Builder, clinic *ClinicContext) {
 				row.CopTime,
 				row.ProcessTime,
 				row.WaitTime,
-			))
+			)
 			if row.TotalKeys > 0 {
-				sb.WriteString(fmt.Sprintf(" total_keys=%d", row.TotalKeys))
+				_, _ = fmt.Fprintf(sb, " total_keys=%d", row.TotalKeys)
 			}
 			if row.ProcessKeys > 0 {
-				sb.WriteString(fmt.Sprintf(" process_keys=%d", row.ProcessKeys))
+				_, _ = fmt.Fprintf(sb, " process_keys=%d", row.ProcessKeys)
 			}
 			if row.ResultRows > 0 {
-				sb.WriteString(fmt.Sprintf(" result_rows=%d", row.ResultRows))
+				_, _ = fmt.Fprintf(sb, " result_rows=%d", row.ResultRows)
 			}
 			if row.MemBytes > 0 {
-				sb.WriteString(fmt.Sprintf(" mem_bytes=%d", row.MemBytes))
+				_, _ = fmt.Fprintf(sb, " mem_bytes=%d", row.MemBytes)
 			}
 			if row.DiskBytes > 0 {
-				sb.WriteString(fmt.Sprintf(" disk_bytes=%d", row.DiskBytes))
+				_, _ = fmt.Fprintf(sb, " disk_bytes=%d", row.DiskBytes)
 			}
 			if row.Database != "" {
 				sb.WriteString(" db=")
@@ -438,25 +438,25 @@ func writeClinicContext(sb *strings.Builder, clinic *ClinicContext) {
 			sb.WriteString(" plan_digest=")
 			sb.WriteString(item.PlanDigest)
 		}
-		sb.WriteString(fmt.Sprintf(" exec_count=%d avg_sec=%.6f max_sec=%.6f",
+		_, _ = fmt.Fprintf(sb, " exec_count=%d avg_sec=%.6f max_sec=%.6f",
 			item.ExecutionCount,
 			item.AvgQueryTime,
 			item.MaxQueryTime,
-		))
+		)
 		if item.MaxTotalKeys > 0 {
-			sb.WriteString(fmt.Sprintf(" max_total_keys=%d", item.MaxTotalKeys))
+			_, _ = fmt.Fprintf(sb, " max_total_keys=%d", item.MaxTotalKeys)
 		}
 		if item.MaxProcessKeys > 0 {
-			sb.WriteString(fmt.Sprintf(" max_process_keys=%d", item.MaxProcessKeys))
+			_, _ = fmt.Fprintf(sb, " max_process_keys=%d", item.MaxProcessKeys)
 		}
 		if item.MaxResultRows > 0 {
-			sb.WriteString(fmt.Sprintf(" max_result_rows=%d", item.MaxResultRows))
+			_, _ = fmt.Fprintf(sb, " max_result_rows=%d", item.MaxResultRows)
 		}
 		if item.MaxMemBytes > 0 {
-			sb.WriteString(fmt.Sprintf(" max_mem_bytes=%d", item.MaxMemBytes))
+			_, _ = fmt.Fprintf(sb, " max_mem_bytes=%d", item.MaxMemBytes)
 		}
 		if item.MaxDiskBytes > 0 {
-			sb.WriteString(fmt.Sprintf(" max_disk_bytes=%d", item.MaxDiskBytes))
+			_, _ = fmt.Fprintf(sb, " max_disk_bytes=%d", item.MaxDiskBytes)
 		}
 		if item.SampleDB != "" {
 			sb.WriteString(" db=")
