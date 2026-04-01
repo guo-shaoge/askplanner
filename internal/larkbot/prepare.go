@@ -20,12 +20,12 @@ import (
 // prepareReply turns a raw Feishu event into a normalized handler input.
 // This is where message-type-specific behavior lives: plain questions,
 // attachment-only messages, /upload_N, and local/workspace commands.
-func prepareReply(ctx context.Context, apiClient *lark.Client, manager *attachments.Manager, event *larkim.P2MessageReceiveV1) (*preparedReply, error) {
-	userKey := extractPreferredSenderID(event)
+func prepareReply(ctx context.Context, apiClient *lark.Client, manager *attachments.Manager, event *larkim.P2MessageReceiveV1, bot botIdentity) (*preparedReply, error) {
+	userKey := buildScopedUserKey(event, bot)
 	if userKey == "" {
 		return nil, usererr.New(usererr.KindInvalidInput, "This Feishu message is missing sender information. Please resend it.")
 	}
-	conversationKey := buildConversationKey(event)
+	conversationKey := buildConversationKey(event, bot)
 
 	switch extractMessageType(event) {
 	case "text", "post":

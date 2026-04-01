@@ -11,6 +11,15 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
+const (
+	replyErrThreadUnsupported = 230071
+	replyErrAggregatedThread  = 230072
+)
+
+type replyOptions struct {
+	preferThread bool
+}
+
 // buildReplyBody always renders a post+markdown payload so the bot can send
 // code fences, links, and richer formatting without switching message types.
 func buildReplyBody(text string) (replyBody, error) {
@@ -130,15 +139,15 @@ func deleteMessageReaction(ctx context.Context, apiClient *lark.Client, messageI
 	return nil
 }
 
-func replyMessage(ctx context.Context, apiClient *lark.Client, messageID string, body replyBody) error {
-	if err := replyMessageOnce(ctx, apiClient, messageID, body, "reply-"+messageID+"-"+body.msgType); err != nil {
+func replyMessage(ctx context.Context, apiClient *lark.Client, messageID string, body replyBody, opts replyOptions) error {
+	if err := replyMessageOnce(ctx, apiClient, messageID, body, "reply-"+messageID+"-"+body.msgType, opts.preferThread); err != nil {
 		if body.msgType == "post" && strings.TrimSpace(body.fallbackText) != "" && shouldFallbackToTextReply(err) {
 			log.Printf("[larkbot] rich post reply failed, falling back to text: %v (message_id=%s)", err, messageID)
 			fallback, buildErr := buildTextReplyBody(body.fallbackText)
 			if buildErr != nil {
 				return fmt.Errorf("build text fallback reply: %w", buildErr)
 			}
-			if fallbackErr := replyMessageOnce(ctx, apiClient, messageID, fallback, "reply-"+messageID+"-text"); fallbackErr == nil {
+			if fallbackErr := replyMessageOnce(ctx, apiClient, messageID, fallback, "reply-"+messageID+"-text", opts.preferThread); fallbackErr == nil {
 				return nil
 			} else {
 				return fmt.Errorf("reply fallback after rich post failure: %w", fallbackErr)
@@ -149,24 +158,32 @@ func replyMessage(ctx context.Context, apiClient *lark.Client, messageID string,
 	return nil
 }
 
-func replyMessageOnce(ctx context.Context, apiClient *lark.Client, messageID string, body replyBody, uuid string) error {
-	log.Printf("[larkbot] replying to message_id=%s", messageID)
+func replyMessageOnce(ctx context.Context, apiClient *lark.Client, messageID string, body replyBody, uuid string, preferThread bool) error {
+	log.Printf("[larkbot] replying to message_id=%s prefer_thread=%t", messageID, preferThread)
+	bodyBuilder := larkim.NewReplyMessageReqBodyBuilder().
+		MsgType(body.msgType).
+		Content(body.content).
+		Uuid(uuid)
+	if preferThread {
+		bodyBuilder = bodyBuilder.ReplyInThread(true)
+	}
+
 	resp, err := apiClient.Im.Message.Reply(ctx,
 		larkim.NewReplyMessageReqBuilder().
 			MessageId(messageID).
-			Body(larkim.NewReplyMessageReqBodyBuilder().
-				MsgType(body.msgType).
-				Content(body.content).
-				Uuid(uuid).
-				Build()).
+			Body(bodyBuilder.Build()).
 			Build())
 	if err != nil {
 		return classifyFeishuOperationError(err, "Agent couldn't send the reply to Feishu.")
 	}
 	if !resp.Success() {
+		if preferThread && (resp.Code == replyErrThreadUnsupported || resp.Code == replyErrAggregatedThread) {
+			log.Printf("[larkbot] thread reply unavailable for message_id=%s code=%d, retrying without thread",
+				messageID, resp.Code)
+			return replyMessageOnce(ctx, apiClient, messageID, body, uuid, false)
+		}
 		return classifyFeishuResponseError(feishuOpReplyMessage, "Agent couldn't send the reply to Feishu.", resp.Code, resp.Msg)
 	}
-	log.Printf("[larkbot] reply sent (message_id=%s)", messageID)
 	return nil
 }
 

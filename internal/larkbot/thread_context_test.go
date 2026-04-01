@@ -135,7 +135,7 @@ func TestPrepareReplyLoadsThreadContextForCodexQuestions(t *testing.T) {
 		},
 	}
 
-	reply, err := prepareReply(context.Background(), apiClient, manager, event)
+	reply, err := prepareReply(context.Background(), apiClient, manager, event, botIdentity{key: "bot-a"})
 	if err != nil {
 		t.Fatalf("prepareReply returned error: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestPrepareReplyLoadsThreadContextAcrossPages(t *testing.T) {
 		},
 	}
 
-	reply, err := prepareReply(context.Background(), apiClient, manager, event)
+	reply, err := prepareReply(context.Background(), apiClient, manager, event, botIdentity{key: "bot-a"})
 	if err != nil {
 		t.Fatalf("prepareReply returned error: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestPrepareReplyKeepsThreadHistoryWhenRootFetchFails(t *testing.T) {
 		},
 	}
 
-	reply, err := prepareReply(context.Background(), apiClient, manager, event)
+	reply, err := prepareReply(context.Background(), apiClient, manager, event, botIdentity{key: "bot-a"})
 	if err != nil {
 		t.Fatalf("prepareReply returned error: %v", err)
 	}
@@ -487,7 +487,7 @@ func TestThreadContextFallsBackToLatestHistoryWhenCurrentNotVisibleYet(t *testin
 		},
 	}
 
-	reply, err := prepareReply(context.Background(), apiClient, manager, event)
+	reply, err := prepareReply(context.Background(), apiClient, manager, event, botIdentity{key: "bot-a"})
 	if err != nil {
 		t.Fatalf("prepareReply returned error: %v", err)
 	}
@@ -571,7 +571,7 @@ func TestThreadContextPreservesFeishuOrderForSameMillisecondMessages(t *testing.
 		},
 	}
 
-	reply, err := prepareReply(context.Background(), apiClient, manager, event)
+	reply, err := prepareReply(context.Background(), apiClient, manager, event, botIdentity{key: "bot-a"})
 	if err != nil {
 		t.Fatalf("prepareReply returned error: %v", err)
 	}

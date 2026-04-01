@@ -186,7 +186,19 @@ FEISHU_BOT_NAME="askplanner" \
 ./bin/askplanner_larkbot
 ```
 
+Or run multiple bots in one process:
+
+```bash
+FEISHU_BOTS_JSON='[
+  {"key":"bot-a","app_id":"cli_xxxx","app_secret":"xxxx","bot_name":"askplanner-a"},
+  {"key":"bot-b","app_id":"cli_yyyy","app_secret":"yyyy","bot_name":"askplanner-b"}
+]' \
+./bin/askplanner_larkbot
+```
+
 In group chats, the bot only handles `text` and `post` rich-text messages that are explicitly addressed to it. The most reliable setup is to configure `FEISHU_BOT_NAME` (defaults to `askplanner`) so the bot can verify that the mention target is actually itself by matching the `name` field in the mentions list.
+
+When `FEISHU_BOTS_JSON` is used, each bot gets its own logical namespace in conversation keys, session keys, workspaces, and attachment libraries, while still sharing the same askplanner process and storage formats.
 
 The bot stores attachments in a persistent per-user library under `FEISHU_FILE_DIR`. Each sender gets a separate directory, and the library keeps at most `FEISHU_USER_FILE_MAX_ITEMS` top-level items (default `100`). When the limit is exceeded, the oldest top-level items are deleted first.
 
@@ -276,8 +288,9 @@ Lark-specific variables:
 
 | Env Var | Required | Description |
 |--------|----------|-------------|
-| `FEISHU_APP_ID` | Yes | Feishu app ID |
-| `FEISHU_APP_SECRET` | Yes | Feishu app secret |
+| `FEISHU_BOTS_JSON` | No | JSON array of bot configs for multi-bot mode; when set, askplanner ignores the single-bot Feishu credential vars |
+| `FEISHU_APP_ID` | Yes* | Feishu app ID in legacy single-bot mode |
+| `FEISHU_APP_SECRET` | Yes* | Feishu app secret in legacy single-bot mode |
 | `FEISHU_BOT_NAME` | No | Bot display name for group-chat mention matching; defaults to `askplanner` |
 | `FEISHU_DEDUP_MESSAGE_TIMEOUT_IN_MIN` | No | Dedup window in minutes; defaults to `3600` |
 | `FEISHU_FILE_DIR` | No | Per-user attachment library root; defaults to `<WORKSPACE_ROOT>/uploads` |

@@ -388,6 +388,19 @@ func extractPreferredSenderID(event *larkim.P2MessageReceiveV1) string {
 	return ""
 }
 
+func buildScopedUserKey(event *larkim.P2MessageReceiveV1, bot botIdentity) string {
+	raw := sanitizePathSegment(extractPreferredSenderID(event), "")
+	botKey := sanitizePathSegment(bot.key, "")
+	switch {
+	case botKey != "" && raw != "":
+		return "larkbot:" + botKey + ":" + raw
+	case raw != "":
+		return raw
+	default:
+		return ""
+	}
+}
+
 func trimUserID(s *string) string {
 	return trimPtr(s)
 }
@@ -397,6 +410,13 @@ func extractChatID(event *larkim.P2MessageReceiveV1) string {
 		return ""
 	}
 	return trimPtr(event.Event.Message.ChatId)
+}
+
+func extractRootID(event *larkim.P2MessageReceiveV1) string {
+	if event == nil || event.Event == nil || event.Event.Message == nil {
+		return ""
+	}
+	return trimPtr(event.Event.Message.RootId)
 }
 
 func extractThreadID(event *larkim.P2MessageReceiveV1) string {
@@ -417,30 +437,49 @@ func extractEventCreateTime(event *larkim.P2MessageReceiveV1) time.Time {
 	return t
 }
 
-// buildConversationKey keeps one Codex conversation per user/thread or
-// user/chat pair so group threads do not leak context across participants.
-func buildConversationKey(event *larkim.P2MessageReceiveV1) string {
+// buildConversationKey keeps one Codex conversation per user/root-message in
+// groups so the initial channel mention and later thread follow-ups share the
+// same context, while still isolating different users from each other.
+func buildConversationKey(event *larkim.P2MessageReceiveV1, bot botIdentity) string {
 	if event == nil || event.Event == nil {
 		return "lark:unknown"
 	}
 
+	rootID := extractRootID(event)
 	threadID := extractThreadID(event)
 	chatID := extractChatID(event)
-	senderID := sanitizePathSegment(extractPreferredSenderID(event), "")
+	senderID := sanitizePathSegment(buildScopedUserKey(event, bot), "")
 	messageID := extractMessageID(event)
+	prefix := "lark"
+	if botKey := sanitizePathSegment(bot.key, ""); botKey != "" {
+		prefix = "larkbot:" + botKey
+	}
+
+	if isGroupChat(event) {
+		anchorID := sanitizePathSegment(rootID, "")
+		if anchorID == "" && threadID == "" {
+			anchorID = sanitizePathSegment(messageID, "")
+		}
+		switch {
+		case anchorID != "" && senderID != "":
+			return prefix + ":root:" + anchorID + ":user:" + senderID
+		case anchorID != "":
+			return prefix + ":root:" + anchorID
+		}
+	}
 
 	switch {
 	case threadID != "" && senderID != "":
-		return "lark:thread:" + threadID + ":user:" + senderID
+		return prefix + ":thread:" + threadID + ":user:" + senderID
 	case chatID != "" && senderID != "":
-		return "lark:chat:" + chatID + ":user:" + senderID
+		return prefix + ":chat:" + chatID + ":user:" + senderID
 	case threadID != "":
-		return "lark:thread:" + threadID
+		return prefix + ":thread:" + threadID
 	case chatID != "":
-		return "lark:chat:" + chatID
+		return prefix + ":chat:" + chatID
 	case messageID != "":
-		return "lark:message:" + messageID
+		return prefix + ":message:" + messageID
 	default:
-		return "lark:unknown"
+		return prefix + ":unknown"
 	}
 }

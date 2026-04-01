@@ -27,7 +27,7 @@ func TestShowcaseLarkbotUserFacingMessages(t *testing.T) {
 		},
 	}
 
-	_, err := prepareReply(context.Background(), nil, nil, event)
+	_, err := prepareReply(context.Background(), nil, nil, event, botIdentity{key: "bot-a"})
 	if got := usererr.Message(err); got != "Invalid upload command. Use `/upload_<n> your question`, for example `/upload_3 analyze these files`." {
 		t.Fatalf("invalid_upload message = %q", got)
 	} else {

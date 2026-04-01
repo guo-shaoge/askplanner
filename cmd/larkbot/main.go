@@ -32,10 +32,10 @@ func main() {
 
 	app, err := botapp.New(cfg)
 	if err != nil {
-		fatalStartup("build larkbot app", err, "Check FEISHU_APP_ID/FEISHU_APP_SECRET, FEISHU_FILE_DIR, and any local storage paths used by attachments or Clinic snapshots.")
+		fatalStartup("build larkbot app", err, "Check FEISHU_APP_ID/FEISHU_APP_SECRET or FEISHU_BOTS_JSON, FEISHU_FILE_DIR, and any local storage paths used by attachments or Clinic snapshots.")
 	}
 	if err := app.Run(context.Background()); err != nil {
-		fatalStartup("start lark websocket client", err, "Check FEISHU_APP_ID/FEISHU_APP_SECRET and verify outbound network access to Feishu.")
+		fatalStartup("start lark websocket client", err, "Check FEISHU_APP_ID/FEISHU_APP_SECRET or FEISHU_BOTS_JSON and verify outbound network access to Feishu.")
 	}
 }
 

@@ -37,19 +37,23 @@ type workspaceService interface {
 	Reset(ctx context.Context, userKey, repoName string) (*workspace.Workspace, bool, error)
 }
 
-func (a *App) answerEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) (string, error) {
+func (b *botRuntime) answerEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) (string, replyOptions, error) {
 	start := time.Now()
-	prepared, err := prepareReply(ctx, a.apiClient, a.attachments, event)
+	opts := replyOptions{preferThread: shouldReplyInThread(event)}
+	prepared, err := prepareReply(ctx, b.apiClient, b.parent.shared.attachments, event, b.bot)
 	if err != nil {
-		return "", err
+		return "", opts, err
 	}
-	answer, err := handlePreparedReply(ctx, a.responder, a.prefetcher, a.workspace, a.tracker, prepared)
+	route := resolveConversationRoute(event, prepared.conversationKey, b.parent.shared.responder)
+	prepared.conversationKey = route.key
+	opts.preferThread = route.preferThread
+	answer, err := handlePreparedReply(ctx, b.parent.shared.responder, b.parent.shared.prefetcher, b.parent.shared.workspace, b.parent.shared.tracker, prepared)
 	if err != nil {
-		return "", err
+		return "", opts, err
 	}
-	log.Printf("[larkbot] handle event done message_id=%s conversation=%s elapsed=%s",
-		extractMessageID(event), prepared.conversationKey, time.Since(start))
-	return answer, nil
+	log.Printf("%s handle event done message_id=%s conversation=%s elapsed=%s",
+		b.bot.prefix(), extractMessageID(event), prepared.conversationKey, time.Since(start))
+	return answer, opts, nil
 }
 
 // handlePreparedReply is the shared execution path after message parsing.
