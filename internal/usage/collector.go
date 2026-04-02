@@ -49,18 +49,23 @@ type Snapshot struct {
 }
 
 type Summary struct {
-	TotalConversations  int     `json:"total_conversations"`
-	Active15Min         int     `json:"active_15_min"`
-	Active1Hour         int     `json:"active_1_hour"`
-	Active24Hours       int     `json:"active_24_hours"`
-	ResumableSessions   int     `json:"resumable_sessions"`
-	ErrorSessions       int     `json:"error_sessions"`
-	WorkspaceUsers      int     `json:"workspace_users"`
-	ActiveUsers24Hours  int     `json:"active_users_24_hours"`
-	ActiveUsers7Days    int     `json:"active_users_7_days"`
-	TotalUsers          int     `json:"total_users"`
-	TotalQuestions      int     `json:"total_questions"`
-	AvgQuestionsPerUser float64 `json:"avg_questions_per_user"`
+	TotalConversations       int     `json:"total_conversations"`
+	Active15Min              int     `json:"active_15_min"`
+	Active1Hour              int     `json:"active_1_hour"`
+	Active24Hours            int     `json:"active_24_hours"`
+	ResumableSessions        int     `json:"resumable_sessions"`
+	ErrorSessions            int     `json:"error_sessions"`
+	WorkspaceUsers           int     `json:"workspace_users"`
+	ActiveUsers24Hours       int     `json:"active_users_24_hours"`
+	ActiveUsers7Days         int     `json:"active_users_7_days"`
+	TotalUsers               int     `json:"total_users"`
+	TotalUsersByName         int     `json:"total_users_by_name"`
+	ActiveUsers24HoursByName int     `json:"active_users_24_hours_by_name"`
+	ActiveUsers7DaysByName   int     `json:"active_users_7_days_by_name"`
+	ResolvedUserKeys         int     `json:"resolved_user_keys"`
+	UserNameCoveragePct      float64 `json:"user_name_coverage_pct"`
+	TotalQuestions           int     `json:"total_questions"`
+	AvgQuestionsPerUser      float64 `json:"avg_questions_per_user"`
 }
 
 type RequestStats struct {
@@ -226,11 +231,12 @@ func (c *Collector) Snapshot() (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	userNames := c.userNamesForQuestions(context.Background(), questions)
 	users := aggregateUsers(now, questions)
 
 	return &Snapshot{
 		GeneratedAt:             now,
-		Summary:                 buildSummary(now, sessions, workspaces, questions, users, c.sessionTTL),
+		Summary:                 buildSummary(now, sessions, workspaces, questions, users, userNames, c.sessionTTL),
 		RequestStats:            buildRequestStats(now, requests, errors),
 		ModelBreakdown:          buildModelBreakdown(sessions),
 		SourceBreakdown:         buildSourceBreakdown(sessions),
@@ -380,10 +386,14 @@ func (c *Collector) loadLogEvents() ([]logRequestEvent, []logErrorEvent, error) 
 	return requests, errors, nil
 }
 
-func buildSummary(now time.Time, sessions map[string]codex.SessionRecord, workspaces []workspaceMetadata, questions []QuestionEvent, users []UserSummary, ttl time.Duration) Summary {
+func buildSummary(now time.Time, sessions map[string]codex.SessionRecord, workspaces []workspaceMetadata, questions []QuestionEvent, users []UserSummary, userNames map[string]string, ttl time.Duration) Summary {
 	var summary Summary
 	activeUsers24h := map[string]struct{}{}
 	activeUsers7d := map[string]struct{}{}
+	activeUsers24hByName := map[string]struct{}{}
+	activeUsers7dByName := map[string]struct{}{}
+	totalUsersByName := map[string]struct{}{}
+	resolvedUserKeys := map[string]struct{}{}
 
 	for _, session := range sessions {
 		summary.TotalConversations++
@@ -407,6 +417,19 @@ func buildSummary(now time.Time, sessions map[string]codex.SessionRecord, worksp
 
 	for _, event := range questions {
 		summary.TotalQuestions++
+		if strings.TrimSpace(event.UserKey) == "" {
+			continue
+		}
+		if userName := strings.TrimSpace(userNames[userLookupKey(event.Source, event.UserKey, event.ConversationKey)]); userName != "" {
+			totalUsersByName[userName] = struct{}{}
+			resolvedUserKeys[event.UserKey] = struct{}{}
+			if within(now, event.AskedAt, 24*time.Hour) {
+				activeUsers24hByName[userName] = struct{}{}
+			}
+			if within(now, event.AskedAt, 7*24*time.Hour) {
+				activeUsers7dByName[userName] = struct{}{}
+			}
+		}
 		if within(now, event.AskedAt, 24*time.Hour) {
 			activeUsers24h[event.UserKey] = struct{}{}
 		}
@@ -415,8 +438,15 @@ func buildSummary(now time.Time, sessions map[string]codex.SessionRecord, worksp
 		}
 	}
 	summary.TotalUsers = len(users)
+	summary.TotalUsersByName = len(totalUsersByName)
 	summary.ActiveUsers24Hours = len(activeUsers24h)
 	summary.ActiveUsers7Days = len(activeUsers7d)
+	summary.ActiveUsers24HoursByName = len(activeUsers24hByName)
+	summary.ActiveUsers7DaysByName = len(activeUsers7dByName)
+	summary.ResolvedUserKeys = len(resolvedUserKeys)
+	if summary.TotalUsers > 0 {
+		summary.UserNameCoveragePct = float64(summary.ResolvedUserKeys) * 100 / float64(summary.TotalUsers)
+	}
 	if summary.TotalUsers > 0 {
 		summary.AvgQuestionsPerUser = float64(summary.TotalQuestions) / float64(summary.TotalUsers)
 	}
