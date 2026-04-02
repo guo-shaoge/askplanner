@@ -286,10 +286,10 @@ func (l feishuContactLookup) LookupUserName(ctx context.Context, rawID, idType s
 	resp, err := l.client.User.Get(ctx, req)
 	if err != nil || resp == nil || !resp.Success() || resp.Data == nil || resp.Data.User == nil {
 		if err != nil {
-			log.Printf("[usage] feishu lookup error: raw_id=%s id_type=%s err=%v", compactLogField(rawID, 64), idType, err)
+			log.Printf("[usage] feishu lookup error: raw_id=%s id_type=%s err=%v", rawID, idType, err)
 		} else if resp != nil {
 			log.Printf("[usage] feishu lookup miss: raw_id=%s id_type=%s code=%d msg=%s",
-				compactLogField(rawID, 64), idType, resp.Code, compactLogField(resp.Msg, 120))
+				rawID, idType, resp.Code, strings.TrimSpace(resp.Msg))
 		}
 		return ""
 	}
