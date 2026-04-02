@@ -17,9 +17,9 @@ func main() {
 		fatalStartup("load config", err, "Check PROJECT_ROOT and PROMPT_FILE, or start the process from the repository root.")
 	}
 
-	logFile, err := config.SetupLogging(cfg.LogFile)
+	logFile, err := config.SetupLogging(cfg.UsageServerLogFile)
 	if err != nil {
-		fatalStartup("setup logging", err, "Check LOG_FILE and make sure the target directory is writable.")
+		fatalStartup("setup logging", err, "Check USAGE_LOG_FILE and make sure the target directory is writable.")
 	}
 	defer func() {
 		_ = logFile.Close()

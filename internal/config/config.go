@@ -47,6 +47,9 @@ type Config struct {
 	// Logging
 	LogFile string // absolute path
 
+	// Usage server logging
+	UsageServerLogFile string // absolute path
+
 	// Usage dashboard
 	UsageHTTPAddr      string
 	UsageLogTailBytes  int
@@ -106,6 +109,7 @@ func Load() (*Config, error) {
 		ClinicStoreDir:                    resolvePath(projectRoot, clinicStoreDir),
 		ClinicStoreMaxItems:               envAsInt("CLINIC_STORE_MAX_ITEMS", 50),
 		LogFile:                           resolvePath(projectRoot, envOrDefault("LOG_FILE", ".askplanner/askplanner.log")),
+		UsageServerLogFile:                resolvePath(projectRoot, envOrDefault("USAGE_LOG_FILE", ".askplanner/usage/askplanner_usage.log")),
 		UsageHTTPAddr:                     strings.TrimSpace(envOrDefault("USAGE_HTTP_ADDR", "127.0.0.1:18080")),
 		UsageLogTailBytes:                 envAsInt("USAGE_LOG_TAIL_BYTES", 4*1024*1024),
 		UsageQuestionsPath:                resolvePath(projectRoot, envOrDefault("USAGE_QUESTIONS_PATH", ".askplanner/usage_questions.jsonl")),

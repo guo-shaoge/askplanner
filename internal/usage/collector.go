@@ -2,6 +2,7 @@ package usage
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ type Collector struct {
 	sessionTTL       time.Duration
 	logTailBytes     int64
 	questionStore    *QuestionStore
+	userResolver     usageUserResolver
 	now              func() time.Time
 }
 
@@ -47,18 +49,23 @@ type Snapshot struct {
 }
 
 type Summary struct {
-	TotalConversations  int     `json:"total_conversations"`
-	Active15Min         int     `json:"active_15_min"`
-	Active1Hour         int     `json:"active_1_hour"`
-	Active24Hours       int     `json:"active_24_hours"`
-	ResumableSessions   int     `json:"resumable_sessions"`
-	ErrorSessions       int     `json:"error_sessions"`
-	WorkspaceUsers      int     `json:"workspace_users"`
-	ActiveUsers24Hours  int     `json:"active_users_24_hours"`
-	ActiveUsers7Days    int     `json:"active_users_7_days"`
-	TotalUsers          int     `json:"total_users"`
-	TotalQuestions      int     `json:"total_questions"`
-	AvgQuestionsPerUser float64 `json:"avg_questions_per_user"`
+	TotalConversations       int     `json:"total_conversations"`
+	Active15Min              int     `json:"active_15_min"`
+	Active1Hour              int     `json:"active_1_hour"`
+	Active24Hours            int     `json:"active_24_hours"`
+	ResumableSessions        int     `json:"resumable_sessions"`
+	ErrorSessions            int     `json:"error_sessions"`
+	WorkspaceUsers           int     `json:"workspace_users"`
+	ActiveUsers24Hours       int     `json:"active_users_24_hours"`
+	ActiveUsers7Days         int     `json:"active_users_7_days"`
+	TotalUsers               int     `json:"total_users"`
+	TotalUsersByName         int     `json:"total_users_by_name"`
+	ActiveUsers24HoursByName int     `json:"active_users_24_hours_by_name"`
+	ActiveUsers7DaysByName   int     `json:"active_users_7_days_by_name"`
+	ResolvedUserKeys         int     `json:"resolved_user_keys"`
+	UserNameCoveragePct      float64 `json:"user_name_coverage_pct"`
+	TotalQuestions           int     `json:"total_questions"`
+	AvgQuestionsPerUser      float64 `json:"avg_questions_per_user"`
 }
 
 type RequestStats struct {
@@ -88,6 +95,7 @@ type RepoBreakdown struct {
 type SessionView struct {
 	ConversationKey string    `json:"conversation_key"`
 	UserKey         string    `json:"user_key"`
+	UserName        string    `json:"user_name,omitempty"`
 	Source          string    `json:"source"`
 	Model           string    `json:"model"`
 	TurnCount       int       `json:"turn_count"`
@@ -111,12 +119,14 @@ type LogEventView struct {
 
 type UserSummary struct {
 	UserKey          string    `json:"user_key"`
+	UserName         string    `json:"user_name,omitempty"`
 	Source           string    `json:"source"`
 	QuestionCount    int       `json:"question_count"`
 	QuestionCount24H int       `json:"question_count_24h"`
 	QuestionCount7D  int       `json:"question_count_7d"`
 	LastAskedAt      time.Time `json:"last_asked_at"`
 	RecentQuestion   string    `json:"recent_question"`
+	LastConversation string    `json:"-"`
 }
 
 type QuestionView struct {
@@ -124,6 +134,7 @@ type QuestionView struct {
 	AskedAt         time.Time `json:"asked_at"`
 	Source          string    `json:"source"`
 	UserKey         string    `json:"user_key"`
+	UserName        string    `json:"user_name,omitempty"`
 	ConversationKey string    `json:"conversation_key"`
 	Question        string    `json:"question"`
 	Status          string    `json:"status"`
@@ -189,6 +200,7 @@ func NewCollector(cfg *config.Config) (*Collector, error) {
 	if err != nil {
 		return nil, err
 	}
+	resolver := newUsageUserResolver(cfg)
 	return &Collector{
 		sessionStorePath: cfg.CodexSessionStore,
 		logPath:          cfg.LogFile,
@@ -196,6 +208,7 @@ func NewCollector(cfg *config.Config) (*Collector, error) {
 		sessionTTL:       time.Duration(cfg.CodexSessionTTLHours) * time.Hour,
 		logTailBytes:     int64(cfg.UsageLogTailBytes),
 		questionStore:    store,
+		userResolver:     resolver,
 		now:              time.Now,
 	}, nil
 }
@@ -218,19 +231,20 @@ func (c *Collector) Snapshot() (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	userNames := c.userNamesForQuestions(context.Background(), questions)
 	users := aggregateUsers(now, questions)
 
 	return &Snapshot{
 		GeneratedAt:             now,
-		Summary:                 buildSummary(now, sessions, workspaces, questions, users, c.sessionTTL),
+		Summary:                 buildSummary(now, sessions, workspaces, questions, users, userNames, c.sessionTTL),
 		RequestStats:            buildRequestStats(now, requests, errors),
 		ModelBreakdown:          buildModelBreakdown(sessions),
 		SourceBreakdown:         buildSourceBreakdown(sessions),
 		RepoBreakdown:           buildRepoBreakdown(workspaces),
 		QuestionStatusBreakdown: buildQuestionStatusBreakdown(questions),
 		QuestionsPerDay7D:       buildQuestionsPerDay(now, questions, 7),
-		TopUsers:                topUsers(users, 12),
-		RecentSessions:          buildRecentSessions(sessions),
+		TopUsers:                c.enrichUsers(context.Background(), topUsers(users, 12)),
+		RecentSessions:          c.enrichSessions(context.Background(), buildRecentSessions(sessions)),
 		RecentRequests:          buildRecentRequests(requests),
 		RecentErrors:            buildRecentErrors(errors),
 	}, nil
@@ -241,7 +255,8 @@ func (c *Collector) QuestionsPage(query QuestionQuery) (*QuestionsPage, error) {
 	if err != nil {
 		return nil, err
 	}
-	filtered := filterQuestions(questions, query)
+	names := c.userNamesForQuestions(context.Background(), questions)
+	filtered := filterQuestions(questions, query, names)
 	sort.Slice(filtered, func(i, j int) bool {
 		if filtered[i].AskedAt.Equal(filtered[j].AskedAt) {
 			return filtered[i].EventID > filtered[j].EventID
@@ -252,11 +267,13 @@ func (c *Collector) QuestionsPage(query QuestionQuery) (*QuestionsPage, error) {
 	start, end, totalPages := paginateBounds(len(filtered), page, pageSize)
 	items := make([]QuestionView, 0, end-start)
 	for _, event := range filtered[start:end] {
+		name := names[userLookupKey(event.Source, event.UserKey, event.ConversationKey)]
 		items = append(items, QuestionView{
 			EventID:         event.EventID,
 			AskedAt:         event.AskedAt,
 			Source:          event.Source,
 			UserKey:         event.UserKey,
+			UserName:        name,
 			ConversationKey: event.ConversationKey,
 			Question:        event.Question,
 			Status:          event.Status,
@@ -290,7 +307,7 @@ func (c *Collector) UsersPage(query UserQuery) (*UsersPage, error) {
 	page, pageSize := normalizePagination(query.Page, query.PageSize)
 	start, end, totalPages := paginateBounds(len(users), page, pageSize)
 	return &UsersPage{
-		Items:      append([]UserSummary(nil), users[start:end]...),
+		Items:      c.enrichUsers(context.Background(), append([]UserSummary(nil), users[start:end]...)),
 		Page:       page,
 		PageSize:   pageSize,
 		TotalItems: len(users),
@@ -369,10 +386,14 @@ func (c *Collector) loadLogEvents() ([]logRequestEvent, []logErrorEvent, error) 
 	return requests, errors, nil
 }
 
-func buildSummary(now time.Time, sessions map[string]codex.SessionRecord, workspaces []workspaceMetadata, questions []QuestionEvent, users []UserSummary, ttl time.Duration) Summary {
+func buildSummary(now time.Time, sessions map[string]codex.SessionRecord, workspaces []workspaceMetadata, questions []QuestionEvent, users []UserSummary, userNames map[string]string, ttl time.Duration) Summary {
 	var summary Summary
 	activeUsers24h := map[string]struct{}{}
 	activeUsers7d := map[string]struct{}{}
+	activeUsers24hByName := map[string]struct{}{}
+	activeUsers7dByName := map[string]struct{}{}
+	totalUsersByName := map[string]struct{}{}
+	resolvedUserKeys := map[string]struct{}{}
 
 	for _, session := range sessions {
 		summary.TotalConversations++
@@ -396,6 +417,19 @@ func buildSummary(now time.Time, sessions map[string]codex.SessionRecord, worksp
 
 	for _, event := range questions {
 		summary.TotalQuestions++
+		if strings.TrimSpace(event.UserKey) == "" {
+			continue
+		}
+		if userName := strings.TrimSpace(userNames[userLookupKey(event.Source, event.UserKey, event.ConversationKey)]); userName != "" {
+			totalUsersByName[userName] = struct{}{}
+			resolvedUserKeys[event.UserKey] = struct{}{}
+			if within(now, event.AskedAt, 24*time.Hour) {
+				activeUsers24hByName[userName] = struct{}{}
+			}
+			if within(now, event.AskedAt, 7*24*time.Hour) {
+				activeUsers7dByName[userName] = struct{}{}
+			}
+		}
 		if within(now, event.AskedAt, 24*time.Hour) {
 			activeUsers24h[event.UserKey] = struct{}{}
 		}
@@ -404,8 +438,15 @@ func buildSummary(now time.Time, sessions map[string]codex.SessionRecord, worksp
 		}
 	}
 	summary.TotalUsers = len(users)
+	summary.TotalUsersByName = len(totalUsersByName)
 	summary.ActiveUsers24Hours = len(activeUsers24h)
 	summary.ActiveUsers7Days = len(activeUsers7d)
+	summary.ActiveUsers24HoursByName = len(activeUsers24hByName)
+	summary.ActiveUsers7DaysByName = len(activeUsers7dByName)
+	summary.ResolvedUserKeys = len(resolvedUserKeys)
+	if summary.TotalUsers > 0 {
+		summary.UserNameCoveragePct = float64(summary.ResolvedUserKeys) * 100 / float64(summary.TotalUsers)
+	}
 	if summary.TotalUsers > 0 {
 		summary.AvgQuestionsPerUser = float64(summary.TotalQuestions) / float64(summary.TotalUsers)
 	}
@@ -555,6 +596,7 @@ func aggregateUsers(now time.Time, questions []QuestionEvent) []UserSummary {
 			item.LastAskedAt = event.AskedAt
 			item.RecentQuestion = compactText(event.Question, 120)
 			item.Source = event.Source
+			item.LastConversation = event.ConversationKey
 		}
 	}
 	result := make([]UserSummary, 0, len(users))
@@ -637,7 +679,7 @@ func buildRecentErrors(errors []logErrorEvent) []LogEventView {
 	return result
 }
 
-func filterQuestions(questions []QuestionEvent, query QuestionQuery) []QuestionEvent {
+func filterQuestions(questions []QuestionEvent, query QuestionQuery, userNames map[string]string) []QuestionEvent {
 	userKey := strings.TrimSpace(query.UserKey)
 	source := normalizeSource(query.Source)
 	status := strings.TrimSpace(strings.ToLower(query.Status))
@@ -660,7 +702,7 @@ func filterQuestions(questions []QuestionEvent, query QuestionQuery) []QuestionE
 			continue
 		}
 		if needle != "" {
-			haystack := strings.ToLower(event.Question + " " + event.UserKey + " " + event.ConversationKey)
+			haystack := strings.ToLower(event.Question + " " + event.UserKey + " " + event.ConversationKey + " " + userNames[userLookupKey(event.Source, event.UserKey, event.ConversationKey)])
 			if !strings.Contains(haystack, needle) {
 				continue
 			}
@@ -806,11 +848,54 @@ func sourceForConversation(key string) string {
 	switch {
 	case strings.HasPrefix(key, "cli:"):
 		return sourceCLI
+	case strings.HasPrefix(key, "larkbot:"):
+		return sourceLark
 	case strings.HasPrefix(key, "lark:"):
 		return sourceLark
 	default:
 		return sourceOther
 	}
+}
+
+func (c *Collector) userNamesForQuestions(ctx context.Context, questions []QuestionEvent) map[string]string {
+	result := make(map[string]string, len(questions))
+	for _, event := range questions {
+		key := userLookupKey(event.Source, event.UserKey, event.ConversationKey)
+		if _, ok := result[key]; ok {
+			continue
+		}
+		result[key] = c.lookupUserName(ctx, event.Source, event.UserKey, event.ConversationKey)
+	}
+	return result
+}
+
+func (c *Collector) enrichUsers(ctx context.Context, users []UserSummary) []UserSummary {
+	for i := range users {
+		users[i].UserName = c.lookupUserName(ctx, users[i].Source, users[i].UserKey, users[i].LastConversation)
+	}
+	return users
+}
+
+func (c *Collector) enrichSessions(ctx context.Context, sessions []SessionView) []SessionView {
+	for i := range sessions {
+		sessions[i].UserName = c.lookupUserName(ctx, sessions[i].Source, sessions[i].UserKey, sessions[i].ConversationKey)
+	}
+	return sessions
+}
+
+func (c *Collector) lookupUserName(ctx context.Context, source, userKey, conversationKey string) string {
+	if c == nil || c.userResolver == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.userResolver.Resolve(ctx, source, userKey, conversationKey))
+}
+
+func userLookupKey(source, userKey, conversationKey string) string {
+	return strings.Join([]string{
+		strings.TrimSpace(source),
+		strings.TrimSpace(userKey),
+		strings.TrimSpace(conversationKey),
+	}, "\x00")
 }
 
 func sortNamedValues(counts map[string]int) []NamedValue {
