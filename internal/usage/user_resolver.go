@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -55,11 +56,14 @@ type usageUserIdentity struct {
 
 func newUsageUserResolver(cfg *config.Config) usageUserResolver {
 	if cfg == nil {
+		log.Printf("[usage] user resolver disabled: config is nil")
 		return nil
 	}
 	bots := make([]usageResolverBot, 0, len(cfg.LarkBots))
+	skipped := 0
 	for _, botCfg := range cfg.LarkBots {
 		if strings.TrimSpace(botCfg.AppID) == "" || strings.TrimSpace(botCfg.AppSecret) == "" {
+			skipped++
 			continue
 		}
 		client := lark.NewClient(botCfg.AppID, botCfg.AppSecret)
@@ -69,8 +73,14 @@ func newUsageUserResolver(cfg *config.Config) usageUserResolver {
 		})
 	}
 	if len(bots) == 0 {
+		log.Printf("[usage] user resolver disabled: no valid Feishu bot credentials found (configured=%d skipped=%d)", len(cfg.LarkBots), skipped)
 		return nil
 	}
+	keys := make([]string, 0, len(bots))
+	for _, bot := range bots {
+		keys = append(keys, fallbackString(bot.key, "<default>"))
+	}
+	log.Printf("[usage] user resolver enabled: bots=%d keys=%s", len(bots), strings.Join(keys, ","))
 	return &feishuUserNameResolver{
 		bots:  bots,
 		now:   time.Now,
@@ -87,19 +97,41 @@ func (r *feishuUserNameResolver) Resolve(ctx context.Context, source, userKey, c
 	}
 	identity := parseUsageUserIdentity(userKey, conversationKey)
 	if identity.rawID == "" {
+		log.Printf("[usage] user resolver skipped: source=%s user_key=%s conversation=%s reason=no_resolvable_user_id",
+			strings.TrimSpace(source), compactLogField(userKey, 80), compactLogField(conversationKey, 120))
 		return ""
 	}
 	cacheKey := usageResolverCacheKey(identity)
 	if name, ok := r.lookupCache(cacheKey); ok {
+		log.Printf("[usage] user resolver cache hit: bot=%s raw_id=%s name=%s",
+			fallbackString(identity.botKey, usageWildcardBotCacheKey), compactLogField(identity.rawID, 64), compactLogField(name, 64))
 		return name
 	}
 	name := r.lookupRemote(ctx, identity)
 	r.storeCache(cacheKey, name)
+	if strings.TrimSpace(name) == "" {
+		log.Printf("[usage] user resolver lookup failed: bot=%s raw_id=%s user_key=%s conversation=%s",
+			fallbackString(identity.botKey, usageWildcardBotCacheKey),
+			compactLogField(identity.rawID, 64),
+			compactLogField(userKey, 80),
+			compactLogField(conversationKey, 120))
+	} else {
+		log.Printf("[usage] user resolver lookup success: bot=%s raw_id=%s name=%s",
+			fallbackString(identity.botKey, usageWildcardBotCacheKey),
+			compactLogField(identity.rawID, 64),
+			compactLogField(name, 64))
+	}
 	return name
 }
 
 func (r *feishuUserNameResolver) lookupRemote(ctx context.Context, identity usageUserIdentity) string {
-	for _, bot := range r.selectBots(identity.botKey) {
+	bots := r.selectBots(identity.botKey)
+	if len(bots) == 0 {
+		log.Printf("[usage] user resolver has no matching bot client: bot=%s raw_id=%s",
+			fallbackString(identity.botKey, usageWildcardBotCacheKey), compactLogField(identity.rawID, 64))
+		return ""
+	}
+	for _, bot := range bots {
 		if name := lookupFeishuName(ctx, bot.client, identity.rawID, larkcontact.UserIdTypeGetUserOpenId); name != "" {
 			return name
 		}
@@ -250,9 +282,15 @@ func (l feishuContactLookup) LookupUserName(ctx context.Context, rawID, idType s
 	req := larkcontact.NewGetUserReqBuilder().
 		UserId(strings.TrimSpace(rawID)).
 		UserIdType(idType).
-		Build()
+	Build()
 	resp, err := l.client.User.Get(ctx, req)
 	if err != nil || resp == nil || !resp.Success() || resp.Data == nil || resp.Data.User == nil {
+		if err != nil {
+			log.Printf("[usage] feishu lookup error: raw_id=%s id_type=%s err=%v", compactLogField(rawID, 64), idType, err)
+		} else if resp != nil {
+			log.Printf("[usage] feishu lookup miss: raw_id=%s id_type=%s code=%d msg=%s",
+				compactLogField(rawID, 64), idType, resp.Code, compactLogField(resp.Msg, 120))
+		}
 		return ""
 	}
 	if resp.Data.User.Name != nil && strings.TrimSpace(*resp.Data.User.Name) != "" {
@@ -262,4 +300,15 @@ func (l feishuContactLookup) LookupUserName(ctx context.Context, rawID, idType s
 		return strings.TrimSpace(*resp.Data.User.EnName)
 	}
 	return ""
+}
+
+func compactLogField(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
 }
