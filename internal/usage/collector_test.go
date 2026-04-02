@@ -1,11 +1,18 @@
 package usage
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+type stubUsageUserResolver map[string]string
+
+func (s stubUsageUserResolver) Resolve(_ context.Context, source, userKey, conversationKey string) string {
+	return s[userLookupKey(source, userKey, conversationKey)]
+}
 
 func TestCollectorSnapshotAndPages(t *testing.T) {
 	root := t.TempDir()
@@ -96,7 +103,11 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 		sessionTTL:       24 * time.Hour,
 		logTailBytes:     1 << 20,
 		questionStore:    store,
-		now:              func() time.Time { return now },
+		userResolver: stubUsageUserResolver{
+			userLookupKey(sourceCLI, cliVirtualUserKey, ""):          usageCLIUserName,
+			userLookupKey(sourceLark, "u1", "lark:chat:abc:user:u1"): "Alice Zhang",
+		},
+		now: func() time.Time { return now },
 	}
 
 	snapshot, err := collector.Snapshot()
@@ -115,6 +126,12 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 	}
 	if len(snapshot.TopUsers) == 0 || snapshot.TopUsers[0].UserKey != "u1" {
 		t.Fatalf("top users = %+v, want u1 first", snapshot.TopUsers)
+	}
+	if len(snapshot.TopUsers) == 0 || snapshot.TopUsers[0].UserName != "Alice Zhang" {
+		t.Fatalf("top user name = %+v, want Alice Zhang", snapshot.TopUsers)
+	}
+	if len(snapshot.RecentSessions) == 0 || snapshot.RecentSessions[0].UserName != "Alice Zhang" {
+		t.Fatalf("recent sessions = %+v, want enriched lark name", snapshot.RecentSessions)
 	}
 	if snapshot.RequestStats.Requests1Hour != 2 {
 		t.Fatalf("requests 1h = %d, want 2", snapshot.RequestStats.Requests1Hour)
@@ -139,6 +156,17 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 	if page.Items[0].Question != "explain index merge" {
 		t.Fatalf("first question = %q, want newest", page.Items[0].Question)
 	}
+	if page.Items[0].UserName != "Alice Zhang" {
+		t.Fatalf("first question user name = %q, want Alice Zhang", page.Items[0].UserName)
+	}
+
+	pageByName, err := collector.QuestionsPage(QuestionQuery{Page: 1, PageSize: 10, Query: "alice"})
+	if err != nil {
+		t.Fatalf("questions page by name: %v", err)
+	}
+	if pageByName.TotalItems != 2 {
+		t.Fatalf("questions by name total items = %d, want 2", pageByName.TotalItems)
+	}
 
 	users, err := collector.UsersPage(UserQuery{Page: 1, PageSize: 10})
 	if err != nil {
@@ -149,5 +177,14 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 	}
 	if users.Items[0].UserKey != "u1" || users.Items[0].QuestionCount != 2 {
 		t.Fatalf("first user = %+v, want u1 count 2", users.Items[0])
+	}
+	if users.Items[0].UserName != "Alice Zhang" {
+		t.Fatalf("first user name = %q, want Alice Zhang", users.Items[0].UserName)
+	}
+}
+
+func TestSourceForConversationRecognizesLarkbotPrefix(t *testing.T) {
+	if got := sourceForConversation("larkbot:bot-a:root:om_1:user:larkbot_bot-a_ou_123"); got != sourceLark {
+		t.Fatalf("sourceForConversation returned %q, want %q", got, sourceLark)
 	}
 }

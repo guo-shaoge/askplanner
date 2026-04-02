@@ -224,6 +224,15 @@ const sharedScript = `
       var d = new Date(value);
       return isNaN(d.getTime()) ? "-" : d.toLocaleString();
     }
+    function renderUserLabel(row, href) {
+      var name = String(row.user_name || '').trim();
+      var key = String(row.user_key || '').trim();
+      var primary = name || key || '-';
+      var secondary = key && name && key !== name ? '<div class="mono" style="margin-top:4px">' + escapeHTML(key) + '</div>' : '';
+      var body = '<span>' + escapeHTML(primary) + '</span>' + secondary;
+      if (!href) return body;
+      return '<a href="' + escapeHTML(href) + '">' + body + '</a>';
+    }
     function renderBreakdown(el, items) {
       if (!items || !items.length) {
         el.innerHTML = '<div class="empty">No data yet.</div>';
@@ -378,7 +387,7 @@ const indexHTML = `<!doctype html>
     }
     function renderTopUsers(el, rows) {
       renderTable(el, [
-        { label: 'User', render: function(row) { return '<a class="mono" href="' + escapeHTML('/questions?user_key=' + encodeURIComponent(row.user_key)) + '">' + escapeHTML(row.user_key) + '</a>'; } },
+        { label: 'User', render: function(row) { return renderUserLabel(row, '/questions?user_key=' + encodeURIComponent(row.user_key)); } },
         { label: 'Source', render: function(row) { return '<span class="pill pill-teal">' + escapeHTML(row.source) + '</span>'; } },
         { label: 'Questions', render: function(row) { return escapeHTML(fmtNumber(row.question_count)); } },
         { label: '24h', render: function(row) { return escapeHTML(fmtNumber(row.question_count_24h)); } },
@@ -405,7 +414,7 @@ const indexHTML = `<!doctype html>
       renderTrend(document.getElementById('questionsTrend'), data.questions_per_day_7d || []);
       renderTopUsers(document.getElementById('topUsers'), data.top_users || []);
       renderTable(document.getElementById('usersTable'), [
-        { label: 'User', render: function(row) { return '<a class="mono" href="' + escapeHTML('/questions?user_key=' + encodeURIComponent(row.user_key)) + '">' + escapeHTML(row.user_key) + '</a>'; } },
+        { label: 'User', render: function(row) { return renderUserLabel(row, '/questions?user_key=' + encodeURIComponent(row.user_key)); } },
         { label: 'Source', render: function(row) { return '<span class="pill pill-teal">' + escapeHTML(row.source) + '</span>'; } },
         { label: 'Questions', render: function(row) { return escapeHTML(fmtNumber(row.question_count)); } },
         { label: '24h', render: function(row) { return escapeHTML(fmtNumber(row.question_count_24h)); } },
@@ -417,7 +426,7 @@ const indexHTML = `<!doctype html>
         { label: 'Last Active', render: function(row) { return escapeHTML(fmtTime(row.last_active_at)); } },
         { label: 'Source', render: function(row) { return '<span class="pill">' + escapeHTML(row.source) + '</span>'; } },
         { label: 'Conversation', render: function(row) { return '<span class="mono">' + escapeHTML(row.conversation_key) + '</span>'; } },
-        { label: 'User', render: function(row) { return '<span class="mono">' + escapeHTML(row.user_key || '-') + '</span>'; } },
+        { label: 'User', render: function(row) { return renderUserLabel(row, ''); } },
         { label: 'Model', render: function(row) { return escapeHTML(row.model); } },
         { label: 'Turns', render: function(row) { return escapeHTML(fmtNumber(row.turn_count)); } },
         { label: 'Last Question', render: function(row) { return escapeHTML(row.last_question || '-'); } },
@@ -476,7 +485,7 @@ const questionsHTML = `<!doctype html>
         <div class="panel-inner">
           <div class="panel-head"><h2>Filters</h2><div class="panel-note">Use filters to narrow by user, source, status, text, or date range.</div></div>
           <form id="filters" class="filters">
-            <div class="field"><label>User</label><input name="user_key" placeholder="u123 or cli:default"></div>
+            <div class="field"><label>User</label><input name="user_key" placeholder="user key; search also matches resolved names"></div>
             <div class="field"><label>Source</label><select name="source"><option value="">all</option><option value="cli">cli</option><option value="lark">lark</option></select></div>
             <div class="field"><label>Status</label><select name="status"><option value="">all</option><option value="success">success</option><option value="short_circuit">short_circuit</option><option value="error">error</option></select></div>
             <div class="field"><label>Search</label><input name="q" placeholder="question text / conversation key"></div>
@@ -554,7 +563,7 @@ const questionsHTML = `<!doctype html>
       document.getElementById('nextBtn').disabled = currentTotalPages === 0 || currentPage >= currentTotalPages;
       renderTable(document.getElementById('questionsTable'), [
         { label: 'Asked At', render: function(row) { return escapeHTML(fmtTime(row.asked_at)); } },
-        { label: 'User', render: function(row) { return '<a class="mono" href="/questions?user_key=' + encodeURIComponent(row.user_key) + '">' + escapeHTML(row.user_key) + '</a>'; } },
+        { label: 'User', render: function(row) { return renderUserLabel(row, '/questions?user_key=' + encodeURIComponent(row.user_key)); } },
         { label: 'Source', render: function(row) { return '<span class="pill">' + escapeHTML(row.source) + '</span>'; } },
         { label: 'Status', render: function(row) { return '<span class="pill pill-teal">' + escapeHTML(row.status) + '</span>'; } },
         { label: 'Question', render: function(row) { return escapeHTML(row.question); } },

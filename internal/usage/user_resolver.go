@@ -1,0 +1,265 @@
+package usage
+
+import (
+	"context"
+	"strings"
+	"sync"
+	"time"
+
+	lark "github.com/larksuite/oapi-sdk-go/v3"
+	larkcontact "github.com/larksuite/oapi-sdk-go/v3/service/contact/v3"
+
+	"lab/askplanner/internal/config"
+)
+
+const (
+	usageCLIUserName         = "CLI"
+	usagePositiveCacheTTL    = 6 * time.Hour
+	usageNegativeCacheTTL    = 10 * time.Minute
+	usageWildcardBotCacheKey = "*"
+)
+
+type usageUserResolver interface {
+	Resolve(ctx context.Context, source, userKey, conversationKey string) string
+}
+
+type usageResolverBot struct {
+	key    string
+	client usageUserLookup
+}
+
+type usageUserLookup interface {
+	LookupUserName(ctx context.Context, rawID, idType string) string
+}
+
+type feishuContactLookup struct {
+	client *larkcontact.V3
+}
+
+type cachedUsageUserName struct {
+	name      string
+	expiresAt time.Time
+}
+
+type feishuUserNameResolver struct {
+	bots  []usageResolverBot
+	now   func() time.Time
+	mu    sync.Mutex
+	cache map[string]cachedUsageUserName
+}
+
+type usageUserIdentity struct {
+	botKey string
+	rawID  string
+}
+
+func newUsageUserResolver(cfg *config.Config) usageUserResolver {
+	if cfg == nil {
+		return nil
+	}
+	bots := make([]usageResolverBot, 0, len(cfg.LarkBots))
+	for _, botCfg := range cfg.LarkBots {
+		if strings.TrimSpace(botCfg.AppID) == "" || strings.TrimSpace(botCfg.AppSecret) == "" {
+			continue
+		}
+		client := lark.NewClient(botCfg.AppID, botCfg.AppSecret)
+		bots = append(bots, usageResolverBot{
+			key:    strings.TrimSpace(botCfg.Key),
+			client: feishuContactLookup{client: client.Contact.V3},
+		})
+	}
+	if len(bots) == 0 {
+		return nil
+	}
+	return &feishuUserNameResolver{
+		bots:  bots,
+		now:   time.Now,
+		cache: make(map[string]cachedUsageUserName),
+	}
+}
+
+func (r *feishuUserNameResolver) Resolve(ctx context.Context, source, userKey, conversationKey string) string {
+	if r == nil {
+		return ""
+	}
+	if normalizeSource(source) == sourceCLI || strings.TrimSpace(userKey) == cliVirtualUserKey {
+		return usageCLIUserName
+	}
+	identity := parseUsageUserIdentity(userKey, conversationKey)
+	if identity.rawID == "" {
+		return ""
+	}
+	cacheKey := usageResolverCacheKey(identity)
+	if name, ok := r.lookupCache(cacheKey); ok {
+		return name
+	}
+	name := r.lookupRemote(ctx, identity)
+	r.storeCache(cacheKey, name)
+	return name
+}
+
+func (r *feishuUserNameResolver) lookupRemote(ctx context.Context, identity usageUserIdentity) string {
+	for _, bot := range r.selectBots(identity.botKey) {
+		if name := lookupFeishuName(ctx, bot.client, identity.rawID, larkcontact.UserIdTypeGetUserOpenId); name != "" {
+			return name
+		}
+		if name := lookupFeishuName(ctx, bot.client, identity.rawID, larkcontact.UserIdTypeGetUserUserId); name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+func (r *feishuUserNameResolver) selectBots(botKey string) []usageResolverBot {
+	botKey = strings.TrimSpace(botKey)
+	if botKey == "" {
+		return r.bots
+	}
+	for _, bot := range r.bots {
+		if bot.key == botKey {
+			return []usageResolverBot{bot}
+		}
+	}
+	return nil
+}
+
+func (r *feishuUserNameResolver) lookupCache(key string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item, ok := r.cache[key]
+	if !ok {
+		return "", false
+	}
+	now := r.now()
+	if now.After(item.expiresAt) {
+		delete(r.cache, key)
+		return "", false
+	}
+	return item.name, true
+}
+
+func (r *feishuUserNameResolver) storeCache(key, name string) {
+	if key == "" {
+		return
+	}
+	ttl := usageNegativeCacheTTL
+	if strings.TrimSpace(name) != "" {
+		ttl = usagePositiveCacheTTL
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cache[key] = cachedUsageUserName{
+		name:      strings.TrimSpace(name),
+		expiresAt: r.now().Add(ttl),
+	}
+}
+
+func usageResolverCacheKey(identity usageUserIdentity) string {
+	if strings.TrimSpace(identity.rawID) == "" {
+		return ""
+	}
+	botKey := strings.TrimSpace(identity.botKey)
+	if botKey == "" {
+		botKey = usageWildcardBotCacheKey
+	}
+	return botKey + "\x00" + strings.TrimSpace(identity.rawID)
+}
+
+func parseUsageUserIdentity(userKey, conversationKey string) usageUserIdentity {
+	userKey = strings.TrimSpace(userKey)
+	conversationKey = strings.TrimSpace(conversationKey)
+
+	if botKey, rawID, ok := parseScopedLarkUserKey(userKey); ok {
+		return usageUserIdentity{botKey: botKey, rawID: rawID}
+	}
+	if botKey, rawID, ok := parseScopedConversationUserID(conversationKey); ok {
+		return usageUserIdentity{botKey: botKey, rawID: rawID}
+	}
+	if rawID, ok := parseLegacyConversationUserID(conversationKey); ok {
+		return usageUserIdentity{rawID: rawID}
+	}
+	if userKey != "" && userKey != cliVirtualUserKey {
+		return usageUserIdentity{botKey: parseConversationBotKey(conversationKey), rawID: userKey}
+	}
+	return usageUserIdentity{}
+}
+
+func parseScopedLarkUserKey(userKey string) (string, string, bool) {
+	parts := strings.SplitN(strings.TrimSpace(userKey), ":", 3)
+	if len(parts) != 3 || parts[0] != "larkbot" {
+		return "", "", false
+	}
+	if strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+		return "", "", false
+	}
+	return parts[1], parts[2], true
+}
+
+func parseConversationBotKey(conversationKey string) string {
+	parts := strings.SplitN(strings.TrimSpace(conversationKey), ":", 3)
+	if len(parts) != 3 || parts[0] != "larkbot" {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
+}
+
+func parseLegacyConversationUserID(conversationKey string) (string, bool) {
+	idx := strings.LastIndex(strings.TrimSpace(conversationKey), ":user:")
+	if idx < 0 {
+		return "", false
+	}
+	rawID := strings.TrimSpace(conversationKey[idx+len(":user:"):])
+	if rawID == "" {
+		return "", false
+	}
+	return rawID, true
+}
+
+func parseScopedConversationUserID(conversationKey string) (string, string, bool) {
+	botKey := parseConversationBotKey(conversationKey)
+	if botKey == "" {
+		return "", "", false
+	}
+	idx := strings.LastIndex(strings.TrimSpace(conversationKey), ":user:")
+	if idx < 0 {
+		return "", "", false
+	}
+	userSegment := strings.TrimSpace(conversationKey[idx+len(":user:"):])
+	prefix := "larkbot_" + botKey + "_"
+	if !strings.HasPrefix(userSegment, prefix) {
+		return "", "", false
+	}
+	rawID := strings.TrimPrefix(userSegment, prefix)
+	if rawID == "" {
+		return "", "", false
+	}
+	return botKey, rawID, true
+}
+
+func lookupFeishuName(ctx context.Context, client usageUserLookup, rawID, idType string) string {
+	if client == nil || strings.TrimSpace(rawID) == "" {
+		return ""
+	}
+	return client.LookupUserName(ctx, rawID, idType)
+}
+
+func (l feishuContactLookup) LookupUserName(ctx context.Context, rawID, idType string) string {
+	if l.client == nil || l.client.User == nil || strings.TrimSpace(rawID) == "" {
+		return ""
+	}
+	req := larkcontact.NewGetUserReqBuilder().
+		UserId(strings.TrimSpace(rawID)).
+		UserIdType(idType).
+		Build()
+	resp, err := l.client.User.Get(ctx, req)
+	if err != nil || resp == nil || !resp.Success() || resp.Data == nil || resp.Data.User == nil {
+		return ""
+	}
+	if resp.Data.User.Name != nil && strings.TrimSpace(*resp.Data.User.Name) != "" {
+		return strings.TrimSpace(*resp.Data.User.Name)
+	}
+	if resp.Data.User.EnName != nil && strings.TrimSpace(*resp.Data.User.EnName) != "" {
+		return strings.TrimSpace(*resp.Data.User.EnName)
+	}
+	return ""
+}
