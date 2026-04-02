@@ -42,7 +42,6 @@ type QuestionEvent struct {
 	Model               string    `json:"model,omitempty"`
 	Error               string    `json:"error,omitempty"`
 	WorkspaceEnvHash    string    `json:"workspace_env_hash,omitempty"`
-	Backfilled          bool      `json:"backfilled,omitempty"`
 	QuestionFingerprint string    `json:"question_fingerprint,omitempty"`
 }
 
@@ -58,17 +57,12 @@ type QuestionSpan struct {
 }
 
 type QuestionStore struct {
-	path         string
-	sessionStore string
+	path string
 }
 
 func NewQuestionTracker(cfg *config.Config) (*QuestionTracker, error) {
 	store := &QuestionStore{
-		path:         cfg.UsageQuestionsPath,
-		sessionStore: cfg.CodexSessionStore,
-	}
-	if err := store.BackfillFromSessions(); err != nil {
-		return nil, err
+		path: cfg.UsageQuestionsPath,
 	}
 	return &QuestionTracker{
 		store: store,
@@ -78,11 +72,7 @@ func NewQuestionTracker(cfg *config.Config) (*QuestionTracker, error) {
 
 func NewQuestionStore(cfg *config.Config) (*QuestionStore, error) {
 	store := &QuestionStore{
-		path:         cfg.UsageQuestionsPath,
-		sessionStore: cfg.CodexSessionStore,
-	}
-	if err := store.BackfillFromSessions(); err != nil {
-		return nil, err
+		path: cfg.UsageQuestionsPath,
 	}
 	return store, nil
 }
@@ -246,91 +236,6 @@ func (s *QuestionStore) Append(event QuestionEvent) error {
 	return nil
 }
 
-func (s *QuestionStore) BackfillFromSessions() error {
-	if s == nil || strings.TrimSpace(s.sessionStore) == "" {
-		return nil
-	}
-	lock, err := acquireUsageLock(s.path + ".lock")
-	if err != nil {
-		return err
-	}
-	defer closeQuietly(lock)
-
-	sessions, err := loadSessionRecords(s.sessionStore)
-	if err != nil {
-		return err
-	}
-	existing, err := s.loadAllNoLock()
-	if err != nil {
-		return err
-	}
-	seen := make(map[string]struct{}, len(existing))
-	for _, event := range existing {
-		seen[event.EventID] = struct{}{}
-	}
-
-	toAppend := make([]QuestionEvent, 0, 32)
-	for _, session := range sessions {
-		source := sourceForConversation(session.ConversationKey)
-		userKey := normalizeUserKey(strings.TrimSpace(session.UserKey), source, session.ConversationKey)
-		model := strings.TrimSpace(session.ModelOverride)
-		if model == "" {
-			model = "(default)"
-		}
-		for _, turn := range session.Turns {
-			question := strings.TrimSpace(turn.User)
-			if !shouldTrackQuestion(question) {
-				continue
-			}
-			askedAt := turn.At.UTC()
-			if askedAt.IsZero() {
-				askedAt = session.LastActiveAt.UTC()
-			}
-			event := QuestionEvent{
-				EventID:             newBackfillEventID(source, userKey, session.ConversationKey, question, askedAt),
-				AskedAt:             askedAt,
-				Source:              source,
-				UserKey:             userKey,
-				ConversationKey:     strings.TrimSpace(session.ConversationKey),
-				Question:            question,
-				Status:              statusSuccess,
-				Model:               model,
-				WorkspaceEnvHash:    strings.TrimSpace(session.EnvironmentHash),
-				Backfilled:          true,
-				QuestionFingerprint: questionFingerprint(question),
-			}
-			if _, ok := seen[event.EventID]; ok {
-				continue
-			}
-			seen[event.EventID] = struct{}{}
-			toAppend = append(toAppend, event)
-		}
-	}
-	if len(toAppend) == 0 {
-		return nil
-	}
-
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return fmt.Errorf("create question store dir: %w", err)
-	}
-	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("open question store for backfill: %w", err)
-	}
-	defer closeQuietly(f)
-
-	for _, event := range toAppend {
-		data, err := json.Marshal(event)
-		if err != nil {
-			return fmt.Errorf("marshal backfill question event: %w", err)
-		}
-		if _, err := f.Write(append(data, '\n')); err != nil {
-			return fmt.Errorf("append backfill question event: %w", err)
-		}
-	}
-	return nil
-}
-
 func (s *QuestionStore) loadAllNoLock() ([]QuestionEvent, error) {
 	file, err := os.Open(s.path)
 	if err != nil {
@@ -443,10 +348,6 @@ func normalizeUserKey(userKey, source, conversationKey string) string {
 
 func newLiveEventID(source, userKey, conversationKey, question string, askedAt time.Time) string {
 	return buildEventID("live", source, userKey, conversationKey, question, askedAt)
-}
-
-func newBackfillEventID(source, userKey, conversationKey, question string, askedAt time.Time) string {
-	return buildEventID("backfill", source, userKey, conversationKey, question, askedAt)
 }
 
 func buildEventID(kind, source, userKey, conversationKey, question string, askedAt time.Time) string {

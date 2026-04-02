@@ -76,10 +76,7 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 		t.Fatalf("write log: %v", err)
 	}
 
-	store := &QuestionStore{path: questionPath, sessionStore: sessionStore}
-	if err := store.BackfillFromSessions(); err != nil {
-		t.Fatalf("backfill questions: %v", err)
-	}
+	store := &QuestionStore{path: questionPath}
 	if err := store.Append(QuestionEvent{
 		EventID:          "live-1",
 		AskedAt:          time.Date(2026, 3, 24, 9, 59, 0, 0, time.UTC),
@@ -92,7 +89,21 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 		Model:            "gpt-5.3-codex",
 		WorkspaceEnvHash: "env1",
 	}); err != nil {
-		t.Fatalf("append question event: %v", err)
+		t.Fatalf("append first question event: %v", err)
+	}
+	if err := store.Append(QuestionEvent{
+		EventID:          "live-2",
+		AskedAt:          time.Date(2026, 3, 24, 9, 58, 0, 0, time.UTC),
+		Source:           sourceCLI,
+		UserKey:          cliVirtualUserKey,
+		ConversationKey:  "cli:default",
+		Question:         "show status",
+		Status:           statusSuccess,
+		DurationMs:       850,
+		Model:            "gpt-5.3-codex",
+		WorkspaceEnvHash: "env-cli",
+	}); err != nil {
+		t.Fatalf("append second question event: %v", err)
 	}
 
 	now := time.Date(2026, 3, 24, 18, 0, 0, 0, time.Local)
@@ -121,8 +132,8 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 	if snapshot.Summary.TotalUsers != 2 {
 		t.Fatalf("total users = %d, want 2", snapshot.Summary.TotalUsers)
 	}
-	if snapshot.Summary.TotalQuestions != 3 {
-		t.Fatalf("total questions = %d, want 3", snapshot.Summary.TotalQuestions)
+	if snapshot.Summary.TotalQuestions != 2 {
+		t.Fatalf("total questions = %d, want 2", snapshot.Summary.TotalQuestions)
 	}
 	if len(snapshot.TopUsers) == 0 || snapshot.TopUsers[0].UserKey != "u1" {
 		t.Fatalf("top users = %+v, want u1 first", snapshot.TopUsers)
@@ -147,11 +158,11 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("questions page: %v", err)
 	}
-	if page.TotalItems != 2 {
-		t.Fatalf("questions total items = %d, want 2", page.TotalItems)
+	if page.TotalItems != 1 {
+		t.Fatalf("questions total items = %d, want 1", page.TotalItems)
 	}
-	if len(page.Items) != 2 {
-		t.Fatalf("questions items = %d, want 2", len(page.Items))
+	if len(page.Items) != 1 {
+		t.Fatalf("questions items = %d, want 1", len(page.Items))
 	}
 	if page.Items[0].Question != "explain index merge" {
 		t.Fatalf("first question = %q, want newest", page.Items[0].Question)
@@ -164,8 +175,8 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("questions page by name: %v", err)
 	}
-	if pageByName.TotalItems != 2 {
-		t.Fatalf("questions by name total items = %d, want 2", pageByName.TotalItems)
+	if pageByName.TotalItems != 1 {
+		t.Fatalf("questions by name total items = %d, want 1", pageByName.TotalItems)
 	}
 
 	users, err := collector.UsersPage(UserQuery{Page: 1, PageSize: 10})
@@ -175,8 +186,8 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 	if users.TotalItems != 2 {
 		t.Fatalf("users total items = %d, want 2", users.TotalItems)
 	}
-	if users.Items[0].UserKey != "u1" || users.Items[0].QuestionCount != 2 {
-		t.Fatalf("first user = %+v, want u1 count 2", users.Items[0])
+	if users.Items[0].UserKey != "u1" || users.Items[0].QuestionCount != 1 {
+		t.Fatalf("first user = %+v, want u1 count 1", users.Items[0])
 	}
 	if users.Items[0].UserName != "Alice Zhang" {
 		t.Fatalf("first user name = %q, want Alice Zhang", users.Items[0].UserName)

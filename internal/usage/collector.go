@@ -141,7 +141,6 @@ type QuestionView struct {
 	DurationMs      int64     `json:"duration_ms"`
 	Model           string    `json:"model"`
 	Error           string    `json:"error"`
-	Backfilled      bool      `json:"backfilled"`
 }
 
 type QuestionsPage struct {
@@ -280,7 +279,6 @@ func (c *Collector) QuestionsPage(query QuestionQuery) (*QuestionsPage, error) {
 			DurationMs:      event.DurationMs,
 			Model:           fallbackString(event.Model, "(default)"),
 			Error:           compactText(event.Error, 240),
-			Backfilled:      event.Backfilled,
 		})
 	}
 	return &QuestionsPage{

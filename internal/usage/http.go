@@ -284,7 +284,7 @@ const indexHTML = `<!doctype html>
         </div>
         <a class="nav-link" href="/questions">Open question details</a>
       </div>
-      <p class="subhead">Snapshot metrics come from the session store and workspace metadata. Cumulative user and question metrics come from the append-only question event store with best-effort session backfill.</p>
+      <p class="subhead">Snapshot metrics come from the session store and workspace metadata. Cumulative user and question metrics come from the append-only question event store.</p>
       <div class="meta">
         <div id="generatedAt">loading...</div>
         <div id="refreshState">refresh every 5s</div>
@@ -570,7 +570,6 @@ const questionsHTML = `<!doctype html>
         { label: 'Conversation', render: function(row) { return '<span class="mono">' + escapeHTML(row.conversation_key) + '</span>'; } },
         { label: 'Latency', render: function(row) { return escapeHTML(fmtNumber(row.duration_ms)) + ' ms'; } },
         { label: 'Model', render: function(row) { return escapeHTML(row.model || '(default)'); } },
-        { label: 'Flags', render: function(row) { return row.backfilled ? '<span class="pill">backfilled</span>' : '-'; } },
         { label: 'Error', render: function(row) { return row.error ? '<span class="error">' + escapeHTML(row.error) + '</span>' : '-'; } }
       ], data.items || [], 'No questions match the current filters.');
     }
