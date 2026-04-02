@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"strings"
 	"sync"
@@ -212,6 +213,21 @@ func (l feishuContactLookup) LookupUserName(ctx context.Context, rawID, idType s
 				strings.TrimSpace(resp.Msg))
 		}
 		return ""
+	}
+	if raw, marshalErr := json.Marshal(resp.Data.User); marshalErr != nil {
+		log.Printf("[usage] feishu lookup response: bot=%s app_id=%s raw_id=%s id_type=%s user_marshal_err=%v",
+			fallbackString(l.key, usageWildcardBotCacheKey),
+			fallbackString(l.appID, "<no-app-id>"),
+			rawID,
+			idType,
+			marshalErr)
+	} else {
+		log.Printf("[usage] feishu lookup response: bot=%s app_id=%s raw_id=%s id_type=%s user=%s",
+			fallbackString(l.key, usageWildcardBotCacheKey),
+			fallbackString(l.appID, "<no-app-id>"),
+			rawID,
+			idType,
+			string(raw))
 	}
 	if resp.Data.User.Name != nil && strings.TrimSpace(*resp.Data.User.Name) != "" {
 		return strings.TrimSpace(*resp.Data.User.Name)
