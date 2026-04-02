@@ -26,6 +26,7 @@ type usageUserResolver interface {
 
 type usageResolverBot struct {
 	key    string
+	appID  string
 	client usageUserLookup
 }
 
@@ -34,6 +35,8 @@ type usageUserLookup interface {
 }
 
 type feishuContactLookup struct {
+	key    string
+	appID  string
 	client *larkcontact.V3
 }
 
@@ -68,8 +71,13 @@ func newUsageUserResolver(cfg *config.Config) usageUserResolver {
 		}
 		client := lark.NewClient(botCfg.AppID, botCfg.AppSecret)
 		bots = append(bots, usageResolverBot{
-			key:    strings.TrimSpace(botCfg.Key),
-			client: feishuContactLookup{client: client.Contact.V3},
+			key:   strings.TrimSpace(botCfg.Key),
+			appID: strings.TrimSpace(botCfg.AppID),
+			client: feishuContactLookup{
+				key:    strings.TrimSpace(botCfg.Key),
+				appID:  strings.TrimSpace(botCfg.AppID),
+				client: client.Contact.V3,
+			},
 		})
 	}
 	if len(bots) == 0 {
@@ -78,7 +86,7 @@ func newUsageUserResolver(cfg *config.Config) usageUserResolver {
 	}
 	keys := make([]string, 0, len(bots))
 	for _, bot := range bots {
-		keys = append(keys, fallbackString(bot.key, "<default>"))
+		keys = append(keys, fallbackString(bot.key, "<default>")+"("+fallbackString(bot.appID, "<no-app-id>")+")")
 	}
 	log.Printf("[usage] user resolver enabled: bots=%d keys=%s", len(bots), strings.Join(keys, ","))
 	return &feishuUserNameResolver{
@@ -131,13 +139,85 @@ func (r *feishuUserNameResolver) lookupRemote(ctx context.Context, identity usag
 			fallbackString(identity.botKey, usageWildcardBotCacheKey), compactLogField(identity.rawID, 64))
 		return ""
 	}
+	idTypes := preferredFeishuIDTypes(identity.rawID)
+	log.Printf("[usage] user resolver trying bots=%d bot_scope=%s raw_id=%s id_types=%s",
+		len(bots),
+		fallbackString(identity.botKey, usageWildcardBotCacheKey),
+		compactLogField(identity.rawID, 64),
+		strings.Join(idTypes, ","))
 	for _, bot := range bots {
-		if name := lookupFeishuName(ctx, bot.client, identity.rawID, larkcontact.UserIdTypeGetUserOpenId); name != "" {
-			return name
+		for _, idType := range idTypes {
+			if name := lookupFeishuName(ctx, bot, identity.rawID, idType); name != "" {
+				return name
+			}
 		}
-		if name := lookupFeishuName(ctx, bot.client, identity.rawID, larkcontact.UserIdTypeGetUserUserId); name != "" {
-			return name
+	}
+	return ""
+}
+
+func preferredFeishuIDTypes(rawID string) []string {
+	rawID = strings.TrimSpace(strings.ToLower(rawID))
+	switch {
+	case strings.HasPrefix(rawID, "ou_"):
+		return []string{larkcontact.UserIdTypeGetUserOpenId}
+	case strings.HasPrefix(rawID, "on_"):
+		return []string{larkcontact.UserIdTypeGetUserOpenId}
+	case strings.HasPrefix(rawID, "u_"):
+		return []string{larkcontact.UserIdTypeGetUserUserId}
+	default:
+		return []string{larkcontact.UserIdTypeGetUserOpenId, larkcontact.UserIdTypeGetUserUserId}
+	}
+}
+
+func lookupFeishuName(ctx context.Context, bot usageResolverBot, rawID, idType string) string {
+	if bot.client == nil || strings.TrimSpace(rawID) == "" {
+		return ""
+	}
+	if name := bot.client.LookupUserName(ctx, rawID, idType); name != "" {
+		log.Printf("[usage] feishu lookup success: bot=%s app_id=%s raw_id=%s id_type=%s name=%s",
+			fallbackString(bot.key, usageWildcardBotCacheKey),
+			fallbackString(bot.appID, "<no-app-id>"),
+			rawID,
+			idType,
+			compactLogField(name, 64))
+		return name
+	}
+	return ""
+}
+
+func (l feishuContactLookup) LookupUserName(ctx context.Context, rawID, idType string) string {
+	if l.client == nil || l.client.User == nil || strings.TrimSpace(rawID) == "" {
+		return ""
+	}
+	req := larkcontact.NewGetUserReqBuilder().
+		UserId(strings.TrimSpace(rawID)).
+		UserIdType(idType).
+		Build()
+	resp, err := l.client.User.Get(ctx, req)
+	if err != nil || resp == nil || !resp.Success() || resp.Data == nil || resp.Data.User == nil {
+		if err != nil {
+			log.Printf("[usage] feishu lookup error: bot=%s app_id=%s raw_id=%s id_type=%s err=%v",
+				fallbackString(l.key, usageWildcardBotCacheKey),
+				fallbackString(l.appID, "<no-app-id>"),
+				rawID,
+				idType,
+				err)
+		} else if resp != nil {
+			log.Printf("[usage] feishu lookup miss: bot=%s app_id=%s raw_id=%s id_type=%s code=%d msg=%s",
+				fallbackString(l.key, usageWildcardBotCacheKey),
+				fallbackString(l.appID, "<no-app-id>"),
+				rawID,
+				idType,
+				resp.Code,
+				strings.TrimSpace(resp.Msg))
 		}
+		return ""
+	}
+	if resp.Data.User.Name != nil && strings.TrimSpace(*resp.Data.User.Name) != "" {
+		return strings.TrimSpace(*resp.Data.User.Name)
+	}
+	if resp.Data.User.EnName != nil && strings.TrimSpace(*resp.Data.User.EnName) != "" {
+		return strings.TrimSpace(*resp.Data.User.EnName)
 	}
 	return ""
 }
@@ -266,40 +346,6 @@ func parseScopedConversationUserID(conversationKey string) (string, string, bool
 		return "", "", false
 	}
 	return botKey, rawID, true
-}
-
-func lookupFeishuName(ctx context.Context, client usageUserLookup, rawID, idType string) string {
-	if client == nil || strings.TrimSpace(rawID) == "" {
-		return ""
-	}
-	return client.LookupUserName(ctx, rawID, idType)
-}
-
-func (l feishuContactLookup) LookupUserName(ctx context.Context, rawID, idType string) string {
-	if l.client == nil || l.client.User == nil || strings.TrimSpace(rawID) == "" {
-		return ""
-	}
-	req := larkcontact.NewGetUserReqBuilder().
-		UserId(strings.TrimSpace(rawID)).
-		UserIdType(idType).
-	Build()
-	resp, err := l.client.User.Get(ctx, req)
-	if err != nil || resp == nil || !resp.Success() || resp.Data == nil || resp.Data.User == nil {
-		if err != nil {
-			log.Printf("[usage] feishu lookup error: raw_id=%s id_type=%s err=%v", rawID, idType, err)
-		} else if resp != nil {
-			log.Printf("[usage] feishu lookup miss: raw_id=%s id_type=%s code=%d msg=%s",
-				rawID, idType, resp.Code, strings.TrimSpace(resp.Msg))
-		}
-		return ""
-	}
-	if resp.Data.User.Name != nil && strings.TrimSpace(*resp.Data.User.Name) != "" {
-		return strings.TrimSpace(*resp.Data.User.Name)
-	}
-	if resp.Data.User.EnName != nil && strings.TrimSpace(*resp.Data.User.EnName) != "" {
-		return strings.TrimSpace(*resp.Data.User.EnName)
-	}
-	return ""
 }
 
 func compactLogField(s string, max int) string {
