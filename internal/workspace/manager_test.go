@@ -27,11 +27,11 @@ func TestParseCommand(t *testing.T) {
 func TestEnsureSwitchAndAgentRulesRefresh(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	tidb := createTestRemote(t, root, "tidb", "main", []string{"release-8.5"})
-	docs := createTestRemote(t, root, "docs", "main", []string{"release-8.5"})
-	agent := createTestRemote(t, root, "agent-rules", "main", nil)
+	createTestRepo(t, root, "contrib/tidb", "main", []string{"release-8.5"})
+	createTestRepo(t, root, "contrib/tidb-docs", "main", []string{"release-8.5"})
+	agent := createTestRepo(t, root, "contrib/agent-rules", "main", nil)
 
-	manager := newTestManager(t, root, tidb.remotePath, docs.remotePath, agent.remotePath)
+	manager := newTestManager(t, root)
 
 	ws, err := manager.Ensure(ctx, "ou_test-user")
 	if err != nil {
@@ -62,7 +62,7 @@ func TestEnsureSwitchAndAgentRulesRefresh(t *testing.T) {
 	}
 
 	oldAgentSHA := findRepo(switched, "agent-rules").ResolvedSHA
-	agent.commitAndPush(t, "main", "second\n")
+	agent.commit(t, "main", "second\n")
 	if err := manager.syncAgentRulesMirror(ctx); err != nil {
 		t.Fatalf("sync agent-rules mirror: %v", err)
 	}
@@ -79,11 +79,11 @@ func TestEnsureSwitchAndAgentRulesRefresh(t *testing.T) {
 func TestSweepRemovesExpiredWorkspace(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	tidb := createTestRemote(t, root, "tidb", "main", nil)
-	docs := createTestRemote(t, root, "docs", "main", nil)
-	agent := createTestRemote(t, root, "agent-rules", "main", nil)
+	createTestRepo(t, root, "contrib/tidb", "main", nil)
+	createTestRepo(t, root, "contrib/tidb-docs", "main", nil)
+	createTestRepo(t, root, "contrib/agent-rules", "main", nil)
 
-	manager := newTestManager(t, root, tidb.remotePath, docs.remotePath, agent.remotePath)
+	manager := newTestManager(t, root)
 	ws, err := manager.Ensure(ctx, "ou_gc-user")
 	if err != nil {
 		t.Fatalf("ensure workspace: %v", err)
@@ -114,11 +114,11 @@ func TestSweepRemovesExpiredWorkspace(t *testing.T) {
 func TestResetUserRemovesWorkspaceAndStateDirs(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	tidb := createTestRemote(t, root, "tidb", "main", nil)
-	docs := createTestRemote(t, root, "docs", "main", nil)
-	agent := createTestRemote(t, root, "agent-rules", "main", nil)
+	createTestRepo(t, root, "contrib/tidb", "main", nil)
+	createTestRepo(t, root, "contrib/tidb-docs", "main", nil)
+	createTestRepo(t, root, "contrib/agent-rules", "main", nil)
 
-	manager := newTestManager(t, root, tidb.remotePath, docs.remotePath, agent.remotePath)
+	manager := newTestManager(t, root)
 	ws, err := manager.Ensure(ctx, "ou_reset-user")
 	if err != nil {
 		t.Fatalf("ensure workspace: %v", err)
@@ -152,20 +152,21 @@ func findRepo(ws *Workspace, name string) RepoState {
 	return RepoState{}
 }
 
-func newTestManager(t *testing.T, root, tidbURL, docsURL, agentURL string) *Manager {
+func newTestManager(t *testing.T, root string) *Manager {
 	t.Helper()
 	manager, err := NewManager(&config.Config{
+		ProjectRoot:                       root,
 		WorkspaceRoot:                     filepath.Join(root, "workspaces"),
 		FeishuFileDir:                     filepath.Join(root, "uploads"),
 		ClinicStoreDir:                    filepath.Join(root, "clinic"),
 		WorkspaceIdleTTLHours:             1,
 		WorkspaceGCIntervalMin:            1,
 		AgentRulesSyncIntervalMin:         1,
-		WorkspaceRepoTidbURL:              tidbURL,
+		WorkspaceRepoTidbURL:              "unused",
 		WorkspaceRepoTidbDefaultRef:       "main",
-		WorkspaceRepoTidbDocsURL:          docsURL,
+		WorkspaceRepoTidbDocsURL:          "unused",
 		WorkspaceRepoTidbDocsDefaultRef:   "main",
-		WorkspaceRepoAgentRulesURL:        agentURL,
+		WorkspaceRepoAgentRulesURL:        "unused",
 		WorkspaceRepoAgentRulesDefaultRef: "main",
 	})
 	if err != nil {
@@ -174,71 +175,63 @@ func newTestManager(t *testing.T, root, tidbURL, docsURL, agentURL string) *Mana
 	return manager
 }
 
-type testRemote struct {
-	srcPath    string
-	remotePath string
+type testRepo struct {
+	path string
 }
 
-func createTestRemote(t *testing.T, root, name, defaultBranch string, extraBranches []string) testRemote {
+func createTestRepo(t *testing.T, root, relativePath, defaultBranch string, extraBranches []string) testRepo {
 	t.Helper()
 	ctx := context.Background()
-	srcPath := filepath.Join(root, name+"-src")
-	remotePath := filepath.Join(root, name+".git")
-	if _, err := runGit(ctx, "", "init", "-b", defaultBranch, srcPath); err != nil {
-		t.Fatalf("git init %s: %v", name, err)
+	repoPath := filepath.Join(root, relativePath)
+	if err := os.MkdirAll(filepath.Dir(repoPath), 0o755); err != nil {
+		t.Fatalf("mkdir parent for %s: %v", relativePath, err)
 	}
-	if _, err := runGit(ctx, srcPath, "config", "user.email", "test@example.com"); err != nil {
+	if _, err := runGit(ctx, "", "init", "-b", defaultBranch, repoPath); err != nil {
+		t.Fatalf("git init %s: %v", relativePath, err)
+	}
+	if _, err := runGit(ctx, repoPath, "config", "user.email", "test@example.com"); err != nil {
 		t.Fatalf("git config email: %v", err)
 	}
-	if _, err := runGit(ctx, srcPath, "config", "user.name", "Test User"); err != nil {
+	if _, err := runGit(ctx, repoPath, "config", "user.name", "Test User"); err != nil {
 		t.Fatalf("git config name: %v", err)
 	}
-	writeRepoFile(t, srcPath, "README.md", name+"\n")
-	if _, err := runGit(ctx, srcPath, "add", "."); err != nil {
+	writeRepoFile(t, repoPath, "README.md", relativePath+"\n")
+	if _, err := runGit(ctx, repoPath, "add", "."); err != nil {
 		t.Fatalf("git add: %v", err)
 	}
-	if _, err := runGit(ctx, srcPath, "commit", "-m", "init"); err != nil {
+	if _, err := runGit(ctx, repoPath, "commit", "-m", "init"); err != nil {
 		t.Fatalf("git commit: %v", err)
 	}
 	for _, branch := range extraBranches {
-		if _, err := runGit(ctx, srcPath, "checkout", "-B", branch); err != nil {
+		if _, err := runGit(ctx, repoPath, "checkout", "-B", branch); err != nil {
 			t.Fatalf("git checkout %s: %v", branch, err)
 		}
-		writeRepoFile(t, srcPath, "BRANCH.txt", branch+"\n")
-		if _, err := runGit(ctx, srcPath, "add", "."); err != nil {
+		writeRepoFile(t, repoPath, "BRANCH.txt", branch+"\n")
+		if _, err := runGit(ctx, repoPath, "add", "."); err != nil {
 			t.Fatalf("git add branch %s: %v", branch, err)
 		}
-		if _, err := runGit(ctx, srcPath, "commit", "-m", "branch "+branch); err != nil {
+		if _, err := runGit(ctx, repoPath, "commit", "-m", "branch "+branch); err != nil {
 			t.Fatalf("git commit branch %s: %v", branch, err)
 		}
 	}
-	if _, err := runGit(ctx, srcPath, "checkout", defaultBranch); err != nil {
+	if _, err := runGit(ctx, repoPath, "checkout", defaultBranch); err != nil {
 		t.Fatalf("git checkout default branch: %v", err)
 	}
-	if _, err := runGit(ctx, "", "clone", "--bare", srcPath, remotePath); err != nil {
-		t.Fatalf("git clone --bare: %v", err)
-	}
-	if _, err := runGit(ctx, srcPath, "remote", "add", "origin", remotePath); err != nil {
-		t.Fatalf("git remote add origin: %v", err)
-	}
-	return testRemote{srcPath: srcPath, remotePath: remotePath}
+	return testRepo{path: repoPath}
 }
 
-func (r testRemote) commitAndPush(t *testing.T, branch, content string) {
+func (r testRepo) commit(t *testing.T, branch, content string) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := runGit(ctx, r.srcPath, "checkout", branch); err != nil {
+	if _, err := runGit(ctx, r.path, "checkout", branch); err != nil {
 		t.Fatalf("git checkout %s: %v", branch, err)
 	}
-	writeRepoFile(t, r.srcPath, "README.md", strings.TrimSpace(content)+"\n")
-	if _, err := runGit(ctx, r.srcPath, "add", "README.md"); err != nil {
+	writeRepoFile(t, r.path, "README.md", strings.TrimSpace(content)+"\n")
+	if _, err := runGit(ctx, r.path, "add", "README.md"); err != nil {
 		t.Fatalf("git add: %v", err)
 	}
-	if _, err := runGit(ctx, r.srcPath, "commit", "-m", "update "+branch); err != nil {
+	if _, err := runGit(ctx, r.path, "commit", "-m", "update "+branch); err != nil {
 		t.Fatalf("git commit: %v", err)
-	}
-	if _, err := runGit(ctx, r.srcPath, "push", "origin", branch); err != nil {
-		t.Fatalf("git push: %v", err)
 	}
 }
 
