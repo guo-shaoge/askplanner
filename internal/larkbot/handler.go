@@ -44,9 +44,6 @@ func (b *botRuntime) answerEvent(ctx context.Context, event *larkim.P2MessageRec
 	if err != nil {
 		return "", opts, err
 	}
-	route := resolveConversationRoute(event, prepared.conversationKey, b.parent.shared.responder)
-	prepared.conversationKey = route.key
-	opts.preferThread = route.preferThread
 	answer, err := handlePreparedReply(ctx, b.parent.shared.responder, b.parent.shared.prefetcher, b.parent.shared.workspace, b.parent.shared.tracker, prepared)
 	if err != nil {
 		return "", opts, err
@@ -285,4 +282,8 @@ func buildWorkspaceChangeNotice(cmd *workspace.Command) string {
 	default:
 		return "Another chat changed the shared workspace, so this conversation had to start a new Codex session."
 	}
+}
+
+func shouldReplyInThread(event *larkim.P2MessageReceiveV1) bool {
+	return isGroupChat(event) && extractThreadID(event) == ""
 }
