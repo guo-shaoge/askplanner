@@ -190,12 +190,13 @@ func (l feishuContactLookup) LookupUserName(ctx context.Context, rawID, idType s
 	if l.client == nil || l.client.User == nil || strings.TrimSpace(rawID) == "" {
 		return ""
 	}
-	req := larkcontact.NewGetUserReqBuilder().
-		UserId(strings.TrimSpace(rawID)).
+	req := larkcontact.NewBatchUserReqBuilder().
+		UserIds([]string{strings.TrimSpace(rawID)}).
 		UserIdType(idType).
+		DepartmentIdType("open_department_id").
 		Build()
-	resp, err := l.client.User.Get(ctx, req)
-	if err != nil || resp == nil || !resp.Success() || resp.Data == nil || resp.Data.User == nil {
+	resp, err := l.client.User.Batch(ctx, req)
+	if err != nil || resp == nil || !resp.Success() || resp.Data == nil || len(resp.Data.Items) == 0 || resp.Data.Items[0] == nil {
 		if err != nil {
 			log.Printf("[usage] feishu lookup error: bot=%s app_id=%s raw_id=%s id_type=%s err=%v",
 				fallbackString(l.key, usageWildcardBotCacheKey),
@@ -214,26 +215,27 @@ func (l feishuContactLookup) LookupUserName(ctx context.Context, rawID, idType s
 		}
 		return ""
 	}
-	if raw, marshalErr := json.Marshal(resp.Data.User); marshalErr != nil {
-		log.Printf("[usage] feishu lookup response: bot=%s app_id=%s raw_id=%s id_type=%s user_marshal_err=%v",
+	user := resp.Data.Items[0]
+	if raw, marshalErr := json.Marshal(user); marshalErr != nil {
+		log.Printf("[usage] feishu batch lookup response: bot=%s app_id=%s raw_id=%s id_type=%s user_marshal_err=%v",
 			fallbackString(l.key, usageWildcardBotCacheKey),
 			fallbackString(l.appID, "<no-app-id>"),
 			rawID,
 			idType,
 			marshalErr)
 	} else {
-		log.Printf("[usage] feishu lookup response: bot=%s app_id=%s raw_id=%s id_type=%s user=%s",
+		log.Printf("[usage] feishu batch lookup response: bot=%s app_id=%s raw_id=%s id_type=%s user=%s",
 			fallbackString(l.key, usageWildcardBotCacheKey),
 			fallbackString(l.appID, "<no-app-id>"),
 			rawID,
 			idType,
 			string(raw))
 	}
-	if resp.Data.User.Name != nil && strings.TrimSpace(*resp.Data.User.Name) != "" {
-		return strings.TrimSpace(*resp.Data.User.Name)
+	if user.Name != nil && strings.TrimSpace(*user.Name) != "" {
+		return strings.TrimSpace(*user.Name)
 	}
-	if resp.Data.User.EnName != nil && strings.TrimSpace(*resp.Data.User.EnName) != "" {
-		return strings.TrimSpace(*resp.Data.User.EnName)
+	if user.EnName != nil && strings.TrimSpace(*user.EnName) != "" {
+		return strings.TrimSpace(*user.EnName)
 	}
 	return ""
 }
