@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -95,5 +97,11 @@ func TestLoadUsesProjectRootFallbackInTempDir(t *testing.T) {
 	}
 	if len(cfg.LarkBots) != 1 || cfg.LarkBots[0].Key != "cli_a" {
 		t.Fatalf("unexpected lark bots: %+v", cfg.LarkBots)
+	}
+	if got, want := cfg.LogFile, filepath.Join(".askplanner", "askplanner.log"); !strings.HasSuffix(got, want) {
+		t.Fatalf("LogFile = %q, want suffix %q", got, want)
+	}
+	if got, want := cfg.UsageServerLogFile, filepath.Join(".askplanner", "usage", "askplanner_usage.log"); !strings.HasSuffix(got, want) {
+		t.Fatalf("UsageServerLogFile = %q, want suffix %q", got, want)
 	}
 }
