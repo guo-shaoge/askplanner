@@ -26,6 +26,7 @@ const metadataFileName = "workspace.json"
 type RepoSpec struct {
 	Name          string
 	RelativePath  string
+	LocalRepoPath string
 	RemoteURL     string
 	DefaultRef    string
 	TrackLatest   bool
@@ -95,21 +96,24 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		agentRulesSyncInterval: time.Duration(cfg.AgentRulesSyncIntervalMin) * time.Minute,
 		repos: map[string]RepoSpec{
 			"tidb": {
-				Name:         "tidb",
-				RelativePath: filepath.Join("contrib", "tidb"),
-				RemoteURL:    strings.TrimSpace(cfg.WorkspaceRepoTidbURL),
-				DefaultRef:   strings.TrimSpace(cfg.WorkspaceRepoTidbDefaultRef),
+				Name:          "tidb",
+				RelativePath:  filepath.Join("contrib", "tidb"),
+				LocalRepoPath: filepath.Join(cfg.ProjectRoot, "contrib", "tidb"),
+				RemoteURL:     strings.TrimSpace(cfg.WorkspaceRepoTidbURL),
+				DefaultRef:    strings.TrimSpace(cfg.WorkspaceRepoTidbDefaultRef),
 			},
 			"agent-rules": {
-				Name:         "agent-rules",
-				RelativePath: filepath.Join("contrib", "agent-rules"),
-				RemoteURL:    strings.TrimSpace(cfg.WorkspaceRepoAgentRulesURL),
-				DefaultRef:   strings.TrimSpace(cfg.WorkspaceRepoAgentRulesDefaultRef),
-				TrackLatest:  true,
+				Name:          "agent-rules",
+				RelativePath:  filepath.Join("contrib", "agent-rules"),
+				LocalRepoPath: filepath.Join(cfg.ProjectRoot, "contrib", "agent-rules"),
+				RemoteURL:     strings.TrimSpace(cfg.WorkspaceRepoAgentRulesURL),
+				DefaultRef:    strings.TrimSpace(cfg.WorkspaceRepoAgentRulesDefaultRef),
+				TrackLatest:   true,
 			},
 			"tidb-docs": {
 				Name:          "tidb-docs",
 				RelativePath:  filepath.Join("contrib", "tidb-docs"),
+				LocalRepoPath: filepath.Join(cfg.ProjectRoot, "contrib", "tidb-docs"),
 				RemoteURL:     strings.TrimSpace(cfg.WorkspaceRepoTidbDocsURL),
 				DefaultRef:    strings.TrimSpace(cfg.WorkspaceRepoTidbDocsDefaultRef),
 				FollowTidbRef: true,
@@ -124,8 +128,8 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		}
 	}
 	for _, spec := range m.repos {
-		if spec.RemoteURL == "" {
-			return nil, fmt.Errorf("workspace repo %s remote URL is empty", spec.Name)
+		if strings.TrimSpace(spec.LocalRepoPath) == "" {
+			return nil, fmt.Errorf("workspace repo %s local repo path is empty", spec.Name)
 		}
 		if spec.DefaultRef == "" {
 			return nil, fmt.Errorf("workspace repo %s default ref is empty", spec.Name)
@@ -634,15 +638,22 @@ func (m *Manager) ensureMirror(ctx context.Context, spec RepoSpec) error {
 		log.Printf("[workspace] mirror hit repo=%s path=%s", spec.Name, mirrorPath)
 		return nil
 	}
+	localRepoPath, err := resolveLocalRepoPath(spec)
+	if err != nil {
+		return err
+	}
 	start := time.Now()
-	log.Printf("[workspace] mirror clone start repo=%s remote=%s path=%s", spec.Name, spec.RemoteURL, mirrorPath)
+	log.Printf("[workspace] mirror seed start repo=%s source=%s path=%s", spec.Name, localRepoPath, mirrorPath)
 	if err := os.MkdirAll(filepath.Dir(mirrorPath), 0o755); err != nil {
 		return fmt.Errorf("create mirror parent dir: %w", err)
 	}
-	if _, err := runGit(ctx, "", "clone", "--mirror", spec.RemoteURL, mirrorPath); err != nil {
-		return fmt.Errorf("clone mirror for %s: %w", spec.Name, err)
+	if err := os.RemoveAll(mirrorPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale mirror for %s: %w", spec.Name, err)
 	}
-	log.Printf("[workspace] mirror clone done repo=%s path=%s elapsed=%s", spec.Name, mirrorPath, time.Since(start))
+	if _, err := runGit(ctx, "", "clone", "--mirror", localRepoPath, mirrorPath); err != nil {
+		return fmt.Errorf("seed mirror for %s from local repo: %w", spec.Name, err)
+	}
+	log.Printf("[workspace] mirror seed done repo=%s path=%s elapsed=%s", spec.Name, mirrorPath, time.Since(start))
 	return nil
 }
 
@@ -650,9 +661,16 @@ func (m *Manager) fetchMirror(ctx context.Context, spec RepoSpec) error {
 	if err := m.ensureMirror(ctx, spec); err != nil {
 		return err
 	}
+	localRepoPath, err := resolveLocalRepoPath(spec)
+	if err != nil {
+		return err
+	}
 	start := time.Now()
-	log.Printf("[workspace] mirror fetch start repo=%s", spec.Name)
-	_, err := runGit(ctx, "", "--git-dir", m.mirrorPath(spec), "fetch", "--prune", "--tags", "origin", "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*")
+	log.Printf("[workspace] mirror fetch start repo=%s source=%s", spec.Name, localRepoPath)
+	if _, err := runGit(ctx, "", "--git-dir", m.mirrorPath(spec), "remote", "set-url", "origin", localRepoPath); err != nil {
+		return fmt.Errorf("set mirror origin for %s: %w", spec.Name, err)
+	}
+	_, err = runGit(ctx, "", "--git-dir", m.mirrorPath(spec), "fetch", "--prune", "--tags", "origin", "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*")
 	if err != nil {
 		return fmt.Errorf("fetch mirror for %s: %w", spec.Name, err)
 	}
@@ -984,4 +1002,22 @@ func shortSHAForLog(s string) string {
 		return s[:12]
 	}
 	return s
+}
+
+func resolveLocalRepoPath(spec RepoSpec) (string, error) {
+	localRepoPath := strings.TrimSpace(spec.LocalRepoPath)
+	if localRepoPath == "" {
+		return "", fmt.Errorf("workspace repo %s local repo path is empty", spec.Name)
+	}
+	info, err := os.Stat(localRepoPath)
+	if err != nil {
+		return "", fmt.Errorf("stat local repo for %s: %w", spec.Name, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("local repo for %s is not a directory: %s", spec.Name, localRepoPath)
+	}
+	if _, err := runGit(context.Background(), localRepoPath, "rev-parse", "--git-dir"); err != nil {
+		return "", fmt.Errorf("validate local repo for %s: %w", spec.Name, err)
+	}
+	return localRepoPath, nil
 }
