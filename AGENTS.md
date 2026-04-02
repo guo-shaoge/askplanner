@@ -8,6 +8,7 @@ Go relay for **TiDB SQL query tuning**. Receives questions (CLI or Lark bot) →
 cmd/askplanner (CLI REPL)  ─┐
 cmd/larkbot (bootstrap)    ─┤
 cmd/askplanner_usage       ─┤
+cmd/askplanner_migrate_userdata ─┤
                              ├→ internal/larkbot/app (Feishu bot app lifecycle)
                              │       → internal/larkbot/handler (message routing)
                              │       → internal/larkbot/thread_context (topic history prefetch for new sessions)
@@ -40,12 +41,14 @@ cmd/askplanner_usage       ─┤
 | `internal/workspace/manager.go` | Per-user workspace lifecycle, repo switch/sync/reset, background jobs |
 | `internal/clinic/prefetcher.go` | Clinic slow-query link detection, prefetch, stored snapshot context |
 | `internal/attachments/store.go` | User attachment library import/snapshot/quota management |
-| `internal/usage/events.go` | Append-only question event store + best-effort session backfill (`usage_questions.jsonl`) |
+| `internal/usage/events.go` | Append-only question event store (`usage_questions.jsonl`) |
 | `internal/usage/collector.go` | Usage aggregations: cumulative user/question metrics, user ranking, paginated question listing |
 | `internal/usage/http.go` | Dashboard web handlers: `/`, `/questions`, `/api/usage`, `/api/users`, `/api/questions` |
 | `cmd/askplanner/main.go` | CLI REPL (`reset`, `quit`) |
 | `cmd/larkbot/main.go` | Thin bootstrap: load config/logging, construct app, call `Run()` |
 | `cmd/askplanner_usage/main.go` | Usage dashboard server bootstrap |
+| `cmd/askplanner_migrate_userdata/main.go` | User-data migration CLI for copying `.askplanner` state to a new root |
+| `internal/migration/askplanner.go` | Migration logic: copy user data, rewrite workspace symlinks, skip managed repo mirrors/worktrees |
 
 ## contrib/ Submodules
 
@@ -60,8 +63,9 @@ Codex CLI `WorkDir` = project root, so it reads `contrib/` via shell commands (`
 ## Build & Run
 
 ```bash
-make all          # bin/askplanner_cli + bin/askplanner_larkbot
+make all          # build cli, larkbot, usage dashboard, and migrate-userdata tool
 make larkbot      # larkbot only
+make migrate-userdata
 make fmt          # go fmt ./...
 make lint         # run golangci-lint with the pinned repo version
 ```
@@ -183,6 +187,29 @@ When the hash changes (e.g., user switches branches), `canResume()` in the respo
 - On resume failure: auto-starts new session with last 6 turns as context
 - Editing `prompt` invalidates all sessions (hash changes)
 
+## User Data Migration
+
+Use `bin/askplanner_migrate_userdata` when you need to move persisted askplanner state to a new machine, a new deployment root, or a backup directory.
+
+```bash
+make migrate-userdata
+./bin/askplanner_migrate_userdata --source .askplanner /path/to/askplanner-backup
+```
+
+Behavior:
+
+- Copies the askplanner data directory tree to the destination.
+- Preserves regular files such as `sessions.json`, `usage_questions.jsonl`, logs, attachment files, Clinic snapshots, and workspace metadata.
+- Rewrites absolute workspace symlinks like `user-files` and `clinic-files` so they point at the migrated destination tree.
+- Skips managed git data under `workspaces/mirrors/`.
+- Skips per-user managed repo worktrees under `workspaces/users/*/root/contrib/{tidb,tidb-docs,agent-rules}` because those can be recreated by `Ensure`/`/ws sync`.
+
+Operational notes:
+
+- Stop the running askplanner processes before migrating so session, log, and usage files are not being written during the copy.
+- The destination must be different from the source and cannot be nested inside the source directory.
+- After migration, start askplanner with the migrated paths, for example by pointing `CODEX_SESSION_STORE`, `USAGE_QUESTIONS_PATH`, `LOG_FILE`, and `WORKSPACE_ROOT` at the new root if you are not using the default `.askplanner` layout.
+
 ## Usage Dashboard (Agent Fast Path)
 
 ### Core principle
@@ -201,7 +228,7 @@ Runtime entrypoints:
 - Dashboard server bootstrap: `cmd/askplanner_usage/main.go`
 - HTTP handlers/pages: `internal/usage/http.go`
 - Aggregation and pagination: `internal/usage/collector.go`
-- Event write path + startup backfill: `internal/usage/events.go`
+- Event write path: `internal/usage/events.go`
 
 Question event write flow:
 
@@ -209,12 +236,6 @@ Question event write flow:
 2. The span is finalized as `success`, `short_circuit`, or `error`.
 3. Finalized events are appended to `usage_questions.jsonl`.
 4. Append failures are non-fatal (must not break answer path).
-
-Backfill flow:
-
-1. Tracker/store init calls `BackfillFromSessions()`.
-2. Existing `sessions.json` turns are converted into `QuestionEvent` entries (`backfilled=true`).
-3. Backfill is idempotent via stable event IDs.
 
 ### Key data structures
 
@@ -224,13 +245,13 @@ Backfill flow:
   - Identity: `event_id`
   - Time/source identity: `asked_at`, `source`, `user_key`, `conversation_key`
   - Payload: `question`, `status`, `duration_ms`, `model`, `error`
-  - Provenance: `backfilled`, `workspace_env_hash`, `question_fingerprint`
+  - Provenance: `workspace_env_hash`, `question_fingerprint`
 - `QuestionTracker` / `QuestionSpan`
   - Tracks one logical user question lifecycle.
   - Guarantees at-most-one append per span.
 - `QuestionStore`
-  - JSONL append + load + session backfill.
-  - Uses file lock to serialize writes/backfill.
+  - JSONL append + load.
+  - Uses file lock to serialize writes.
 
 `internal/usage/collector.go`:
 
@@ -268,7 +289,6 @@ Filter semantics:
 - `usage_questions.jsonl` is the source of truth for cumulative user/question metrics.
 - `total_users` is distinct `user_key` count from question events (not session count).
 - CLI traffic is normalized as virtual user `cli:default`.
-- Historical counts are best-effort because backfill only sees currently retained session turns.
 - Recent request/error trend cards come from log tail parsing, not from question events.
 
 ## Codex CLI Invocation

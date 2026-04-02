@@ -63,7 +63,7 @@ Practical notes:
 4. The prompt is normalized for Codex CLI. askplanner-specific tool references such as `read_file` and `search_docs` are translated into shell-based workspace exploration rules.
 5. askplanner starts a new Codex session with `codex exec` or resumes an existing one with `codex exec resume`.
 6. Codex reads local skills, local TiDB docs, and local TiDB source code from the workspace and returns the answer.
-7. askplanner persists the conversation's `session_id` in `.askplanner/codex_sessions.json` so later turns can reuse the same Codex thread.
+7. askplanner persists the conversation's `session_id` in `.askplanner/sessions.json` so later turns can reuse the same Codex thread.
 
 The runtime is intentionally simple:
 - No custom MCP tool bridge yet.
@@ -77,6 +77,7 @@ The runtime is intentionally simple:
 - `cmd/askplanner` is the local REPL
 - `cmd/larkbot` is the Feishu/Lark websocket bot
 - `cmd/askplanner_usage` is the local usage dashboard web server
+- `cmd/askplanner_migrate_userdata` copies persisted askplanner user data to a new root
 - `internal/codex` is the active runtime
 
 ### Core Principle
@@ -135,6 +136,8 @@ make
 ./bin/askplanner_cli
 ```
 
+`make` also builds `bin/askplanner_migrate_userdata`, which is the helper for moving persisted user data to a new directory or machine.
+
 ## Usage Dashboard
 
 askplanner includes a local usage dashboard for lightweight observability.
@@ -159,7 +162,7 @@ What it shows:
 Data sources and metric semantics:
 
 - `.askplanner/usage_questions.jsonl` (`USAGE_QUESTIONS_PATH`) is the append-only event store for cumulative user/question metrics.
-- Existing `sessions.json` is used for best-effort historical backfill and session snapshots.
+- Existing `sessions.json` is used for session snapshots.
 - `askplanner.log` tail is used for recent request/error trend cards.
 - Snapshot-style and cumulative-style metrics are both displayed; interpret them separately.
 
@@ -168,6 +171,52 @@ The REPL supports:
 - `reset` to drop the local Codex session
 - `/model`, `/model set <model>`, `/model effort <level>`, `/model reset`, `/model effort reset` for conversation-scoped model management
 - `quit` / `exit`
+
+## User Data Migration
+
+askplanner stores runtime state under `.askplanner/` by default. That state usually includes:
+
+- `sessions.json`
+- `usage_questions.jsonl`
+- `askplanner.log`
+- `workspaces/uploads/` user attachment files
+- `workspaces/clinic/` saved Clinic snapshots
+- `workspaces/users/*/data/workspace.json` and other per-user workspace metadata
+
+To migrate that state to a new directory, build and run the migration tool:
+
+```bash
+make migrate-userdata
+./bin/askplanner_migrate_userdata --source .askplanner /path/to/askplanner-backup
+```
+
+You can also run it directly with `go run`:
+
+```bash
+go run ./cmd/askplanner_migrate_userdata --source .askplanner /path/to/askplanner-backup
+```
+
+What the tool does:
+
+- Recursively copies the source askplanner data directory to the destination.
+- Preserves normal files and directories, including sessions, usage events, logs, uploaded files, Clinic snapshots, and workspace metadata.
+- Rewrites absolute workspace symlinks such as `user-files` and `clinic-files` so they remain valid under the destination root.
+- Skips managed repository data under `workspaces/mirrors/`.
+- Skips managed worktrees under `workspaces/users/*/root/contrib/{tidb,tidb-docs,agent-rules}` because askplanner can recreate them from the configured remotes.
+
+Recommended migration procedure:
+
+1. Stop `askplanner_cli`, `askplanner_larkbot`, and `askplanner_usage`.
+2. Run `./bin/askplanner_migrate_userdata --source <old_data_dir> <new_data_dir>`.
+3. Point the new deployment at the migrated directory, or move the migrated tree into the default `.askplanner` location.
+4. Start askplanner and run `/ws status` for one Lark user or send a test question so managed worktrees are recreated as needed.
+
+Constraints:
+
+- The destination directory must be different from the source.
+- The destination cannot be inside the source directory.
+- The tool is for askplanner's persisted runtime data, not for the top-level git repo.
+- Managed repo mirrors/worktrees are intentionally not copied; the first workspace `Ensure`, `/ws sync`, or `/ws switch` will recreate or refresh them.
 
 ## Lark Bot
 
@@ -302,7 +351,7 @@ Lark-specific variables:
 go build -o bin/askplanner_cli ./cmd/askplanner
 go build -o bin/askplanner_larkbot ./cmd/larkbot
 go build -o bin/askplanner_usage ./cmd/askplanner_usage
-go build -o bin/printprompt ./cmd/printprompt
+go build -o bin/askplanner_migrate_userdata ./cmd/askplanner_migrate_userdata
 go test ./...
 ```
 ## Roadmap

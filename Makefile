@@ -1,6 +1,6 @@
 GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
 
-all: cli larkbot usage migrate-userdata
+all: cli larkbot usage migrate-userdata dedup-usage-questions
 
 cli:
 	go build -o bin/askplanner_cli ./cmd/askplanner
@@ -15,8 +15,11 @@ usage:
 migrate-userdata:
 	go build -o bin/askplanner_migrate_userdata ./cmd/askplanner_migrate_userdata
 
+dedup-usage-questions:
+	go build -o bin/askplanner_dedup_usage_questions ./cmd/askplanner_dedup_usage_questions
+
 clean:
-	rm -f bin/askplanner_cli bin/askplanner_larkbot bin/askplanner_larkbot_staging bin/askplanner_usage bin/askplanner_migrate_userdata
+	rm -f bin/askplanner_cli bin/askplanner_larkbot bin/askplanner_larkbot_staging bin/askplanner_usage bin/askplanner_migrate_userdata bin/askplanner_dedup_usage_questions
 
 fmt:
 	go fmt ./...
@@ -24,4 +27,4 @@ fmt:
 lint:
 	$(GOLANGCI_LINT) run ./...
 
-.PHONY: all cli larkbot usage migrate-userdata clean fmt lint
+.PHONY: all cli larkbot usage migrate-userdata dedup-usage-questions clean fmt lint
