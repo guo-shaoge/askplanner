@@ -364,12 +364,13 @@ go test ./...
 - [x] output a markdown file if output too long
 - [x] error handling: make sure all errors should return to user clearly(like network issue, rate limte ect) (https://github.com/guo-shaoge/askplanner/pull/17)
 - [x] support switch to different release version of tidb repo and tidb-docs repo (https://github.com/guo-shaoge/askplanner/commit/4e11ec3ac9f319d5bec545eeb0d159a452bf7d56)
+- [x] support model management
 - [ ] support process clinic in batch mode
 - [ ] support context management
-- [x] support model management
 - [ ] slow query finder
 - [ ] optimize the response time, especially the first user input request
 - [ ] add a watchdog/daemon to keep the askplanner background process alive
+- [ ] support audit storage, which record all question, data
 
 ### implementation perspective
 - [ ] rotate log to avoid getting log too large
