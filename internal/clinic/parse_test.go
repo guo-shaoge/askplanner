@@ -5,6 +5,13 @@ import (
 	"time"
 )
 
+const (
+	statementDetailTestLink      = "https://clinic.pingcap.com/portal/dashboard/cloud/ngm.html?provider=test&clusterId=123#/statement/detail?query=%7B%22digest%22%3A%22digest-test-1%22%2C%22schema%22%3A%22test_db%22%2C%22beginTime%22%3A1774222540%2C%22endTime%22%3A1774229740%7D"
+	statementDetailTestClusterID = "123"
+	statementDetailTestDigest    = "digest-test-1"
+	statementDetailTestDB        = "test_db"
+)
+
 func withNow(t *testing.T, now time.Time) {
 	t.Helper()
 	prev := nowFunc
@@ -117,20 +124,20 @@ func TestParseSlowQueryDetailExplicitRangeOverridesTimestamp(t *testing.T) {
 }
 
 func TestParseStatementDetailLinkFromEncodedQueryPayload(t *testing.T) {
-	spec, matched, err := ParseSlowQueryLink("https://clinic.pingcap.com/portal/dashboard/cloud/ngm.html?provider=alicloud&clusterId=10892260000245137880#/statement/detail?query=%7B%22digest%22%3A%22a8a6b4f9d3900524e8677581f50e3151d8127a7798d9dd1ec801b567c339a37d%22%2C%22schema%22%3A%22wallet_db%22%2C%22beginTime%22%3A1774222540%2C%22endTime%22%3A1774229740%7D")
+	spec, matched, err := ParseSlowQueryLink(statementDetailTestLink)
 	if err != nil {
 		t.Fatalf("ParseSlowQueryLink returned error: %v", err)
 	}
 	if !matched {
 		t.Fatalf("expected Clinic statement detail link to match")
 	}
-	if spec.ClusterID != "10892260000245137880" {
+	if spec.ClusterID != statementDetailTestClusterID {
 		t.Fatalf("cluster ID = %q", spec.ClusterID)
 	}
-	if spec.Digest != "a8a6b4f9d3900524e8677581f50e3151d8127a7798d9dd1ec801b567c339a37d" {
+	if spec.Digest != statementDetailTestDigest {
 		t.Fatalf("digest = %q", spec.Digest)
 	}
-	if spec.Database != "wallet_db" {
+	if spec.Database != statementDetailTestDB {
 		t.Fatalf("database = %q", spec.Database)
 	}
 	if !spec.IsDetail {
