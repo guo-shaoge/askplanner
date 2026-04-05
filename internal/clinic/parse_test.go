@@ -5,6 +5,13 @@ import (
 	"time"
 )
 
+const (
+	statementDetailTestLink      = "https://clinic.pingcap.com/portal/dashboard/cloud/ngm.html?provider=test&clusterId=123#/statement/detail?query=%7B%22digest%22%3A%22digest-test-1%22%2C%22schema%22%3A%22test_db%22%2C%22beginTime%22%3A1774222540%2C%22endTime%22%3A1774229740%7D"
+	statementDetailTestClusterID = "123"
+	statementDetailTestDigest    = "digest-test-1"
+	statementDetailTestDB        = "test_db"
+)
+
 func withNow(t *testing.T, now time.Time) {
 	t.Helper()
 	prev := nowFunc
@@ -113,6 +120,34 @@ func TestParseSlowQueryDetailExplicitRangeOverridesTimestamp(t *testing.T) {
 	}
 	if spec.StartTime.Unix() != 1773936000 || spec.EndTime.Unix() != 1773936060 {
 		t.Fatalf("explicit range was not preserved: start=%d end=%d", spec.StartTime.Unix(), spec.EndTime.Unix())
+	}
+}
+
+func TestParseStatementDetailLinkFromEncodedQueryPayload(t *testing.T) {
+	spec, matched, err := ParseSlowQueryLink(statementDetailTestLink)
+	if err != nil {
+		t.Fatalf("ParseSlowQueryLink returned error: %v", err)
+	}
+	if !matched {
+		t.Fatalf("expected Clinic statement detail link to match")
+	}
+	if spec.ClusterID != statementDetailTestClusterID {
+		t.Fatalf("cluster ID = %q", spec.ClusterID)
+	}
+	if spec.Digest != statementDetailTestDigest {
+		t.Fatalf("digest = %q", spec.Digest)
+	}
+	if spec.Database != statementDetailTestDB {
+		t.Fatalf("database = %q", spec.Database)
+	}
+	if !spec.IsDetail {
+		t.Fatalf("expected detail route")
+	}
+	if got, want := spec.StartTime.Unix(), int64(1774222540); got != want {
+		t.Fatalf("start time unix = %d, want %d", got, want)
+	}
+	if got, want := spec.EndTime.Unix(), int64(1774229740); got != want {
+		t.Fatalf("end time unix = %d, want %d", got, want)
 	}
 }
 

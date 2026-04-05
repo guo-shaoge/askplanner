@@ -35,6 +35,34 @@ func TestBuildWhereClauseIncludesPartitionsAndFilters(t *testing.T) {
 	}
 }
 
+func TestBuildDetailRowsSQLUsesMySQLStandardIdentifiers(t *testing.T) {
+	spec := LinkSpec{
+		ClusterID: "123",
+		StartTime: time.Date(2026, 4, 5, 8, 17, 27, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 5, 10, 17, 27, 0, time.UTC),
+		Digest:    "digest-1",
+		Database:  "app",
+		IsDetail:  true,
+	}
+
+	sql := buildDetailRowsSQL(spec)
+	wantSnippets := []string{
+		"FROM clinic_data_proxy.slow_query_logs",
+		"date IN ('20260405')",
+		"digest = 'digest-1'",
+		"db = 'app'",
+		"ORDER BY time DESC, query_time DESC",
+	}
+	for _, snippet := range wantSnippets {
+		if !strings.Contains(sql, snippet) {
+			t.Fatalf("detail SQL missing %q:\n%s", snippet, sql)
+		}
+	}
+	if strings.Contains(sql, `"clinic_data_proxy"."slow_query_logs"`) {
+		t.Fatalf("detail SQL should not use quoted identifiers:\n%s", sql)
+	}
+}
+
 func TestFetchSlowQueryContext(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
