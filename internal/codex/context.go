@@ -64,23 +64,21 @@ type ClinicLibraryItem struct {
 }
 
 type ClinicContext struct {
-	SourceURL         string
-	ClusterID         string
-	ClusterName       string
-	OrgName           string
-	DeployType        string
-	StartTime         time.Time
-	EndTime           time.Time
-	Digest            string
-	Database          string
-	Instance          string
-	IsDetail          bool
-	IsStatementDetail bool
-	Summary           ClinicSummary
-	TopDigests        []ClinicDigestSummary
-	DetailRows        []ClinicDetailRow
-	StatementPlans    []ClinicStatementPlan
-	NoRows            bool
+	SourceURL   string
+	ClusterID   string
+	ClusterName string
+	OrgName     string
+	DeployType  string
+	StartTime   time.Time
+	EndTime     time.Time
+	Digest      string
+	Database    string
+	Instance    string
+	IsDetail    bool
+	Summary     ClinicSummary
+	TopDigests  []ClinicDigestSummary
+	DetailRows  []ClinicDetailRow
+	NoRows      bool
 }
 
 type ClinicSummary struct {
@@ -134,22 +132,6 @@ type ClinicDetailRow struct {
 	DecodedPlan string
 	BinaryPlan  string
 	Query       string
-}
-
-type ClinicStatementPlan struct {
-	Digest         string
-	PlanDigest     string
-	DigestText     string
-	StatementType  string
-	Database       string
-	ExecutionCount int64
-	SumLatencySec  float64
-	AvgLatencySec  float64
-	MaxLatencySec  float64
-	PlanHint       string
-	PlanInBinding  bool
-	FirstSeen      time.Time
-	LastSeen       time.Time
 }
 
 // ThreadContext describes earlier messages from the same external message

@@ -20,31 +20,28 @@ const (
 )
 
 type Client struct {
-	APIKey               string
-	HTTPClient           *http.Client
-	APIBaseURL           string
-	DataProxyBase        string
-	StatementPlanFetcher StatementPlanFetcher
+	APIKey        string
+	HTTPClient    *http.Client
+	APIBaseURL    string
+	DataProxyBase string
 }
 
 type AnalysisContext struct {
-	SourceURL         string
-	ClusterID         string
-	ClusterName       string
-	OrgName           string
-	DeployType        string
-	StartTime         time.Time
-	EndTime           time.Time
-	Digest            string
-	Database          string
-	Instance          string
-	IsDetail          bool
-	IsStatementDetail bool
-	Summary           Summary
-	TopDigests        []DigestSummary
-	DetailRows        []SlowQueryDetailRow
-	StatementPlans    []StatementPlanRow
-	NoRows            bool
+	SourceURL   string
+	ClusterID   string
+	ClusterName string
+	OrgName     string
+	DeployType  string
+	StartTime   time.Time
+	EndTime     time.Time
+	Digest      string
+	Database    string
+	Instance    string
+	IsDetail    bool
+	Summary     Summary
+	TopDigests  []DigestSummary
+	DetailRows  []SlowQueryDetailRow
+	NoRows      bool
 }
 
 type Summary struct {
@@ -100,31 +97,12 @@ type DigestSummary struct {
 	SampleSQL         string
 }
 
-type StatementPlanFetcher func(context.Context, LinkSpec) ([]StatementPlanRow, error)
-
-type StatementPlanRow struct {
-	Digest         string
-	PlanDigest     string
-	DigestText     string
-	StatementType  string
-	Database       string
-	ExecutionCount int64
-	SumLatencySec  float64
-	AvgLatencySec  float64
-	MaxLatencySec  float64
-	PlanHint       string
-	PlanInBinding  bool
-	FirstSeen      time.Time
-	LastSeen       time.Time
-}
-
 func NewClient(apiKey string, timeout time.Duration) *Client {
 	return &Client{
-		APIKey:               strings.TrimSpace(apiKey),
-		HTTPClient:           &http.Client{Timeout: timeout},
-		APIBaseURL:           defaultAPIBase,
-		DataProxyBase:        defaultDataProxyBase,
-		StatementPlanFetcher: newChromeStatementPlanFetcher(timeout),
+		APIKey:        strings.TrimSpace(apiKey),
+		HTTPClient:    &http.Client{Timeout: timeout},
+		APIBaseURL:    defaultAPIBase,
+		DataProxyBase: defaultDataProxyBase,
 	}
 }
 
@@ -135,25 +113,16 @@ func (c *Client) FetchSlowQueryContext(ctx context.Context, spec LinkSpec) (*Ana
 	}
 
 	var (
-		summary        Summary
-		topDigests     []DigestSummary
-		detailRows     []SlowQueryDetailRow
-		statementPlans []StatementPlanRow
+		summary    Summary
+		topDigests []DigestSummary
+		detailRows []SlowQueryDetailRow
 	)
 	if spec.IsDetail {
 		detailRows, err = c.queryDetailRows(ctx, spec)
 		if err != nil {
 			return nil, err
 		}
-		if spec.IsStatementDetail && len(detailRows) == 0 {
-			statementPlans, err = c.queryStatementPlans(ctx, spec)
-			if err != nil {
-				return nil, err
-			}
-			summary = summarizeStatementPlans(statementPlans)
-		} else {
-			summary = summarizeDetailRows(detailRows)
-		}
+		summary = summarizeDetailRows(detailRows)
 	} else {
 		summary, err = c.querySummary(ctx, spec)
 		if err != nil {
@@ -166,23 +135,21 @@ func (c *Client) FetchSlowQueryContext(ctx context.Context, spec LinkSpec) (*Ana
 	}
 
 	return &AnalysisContext{
-		SourceURL:         spec.RawURL,
-		ClusterID:         spec.ClusterID,
-		ClusterName:       cluster.ClusterName,
-		OrgName:           cluster.OrgName,
-		DeployType:        cluster.DeployType,
-		StartTime:         spec.StartTime.UTC(),
-		EndTime:           spec.EndTime.UTC(),
-		Digest:            spec.Digest,
-		Database:          spec.Database,
-		Instance:          spec.Instance,
-		IsDetail:          spec.IsDetail,
-		IsStatementDetail: spec.IsStatementDetail,
-		Summary:           summary,
-		TopDigests:        topDigests,
-		DetailRows:        detailRows,
-		StatementPlans:    statementPlans,
-		NoRows:            summary.TotalQueries == 0 && len(detailRows) == 0 && len(statementPlans) == 0,
+		SourceURL:   spec.RawURL,
+		ClusterID:   spec.ClusterID,
+		ClusterName: cluster.ClusterName,
+		OrgName:     cluster.OrgName,
+		DeployType:  cluster.DeployType,
+		StartTime:   spec.StartTime.UTC(),
+		EndTime:     spec.EndTime.UTC(),
+		Digest:      spec.Digest,
+		Database:    spec.Database,
+		Instance:    spec.Instance,
+		IsDetail:    spec.IsDetail,
+		Summary:     summary,
+		TopDigests:  topDigests,
+		DetailRows:  detailRows,
+		NoRows:      summary.TotalQueries == 0 && len(detailRows) == 0,
 	}, nil
 }
 
@@ -317,23 +284,6 @@ func (c *Client) queryTopDigests(ctx context.Context, spec LinkSpec) ([]DigestSu
 		return items[i].MaxQueryTime > items[j].MaxQueryTime
 	})
 	return items, nil
-}
-
-func (c *Client) queryStatementPlans(ctx context.Context, spec LinkSpec) ([]StatementPlanRow, error) {
-	if c.StatementPlanFetcher == nil {
-		return nil, nil
-	}
-	rows, err := c.StatementPlanFetcher(ctx, spec)
-	if err != nil {
-		return nil, err
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].MaxLatencySec == rows[j].MaxLatencySec {
-			return rows[i].ExecutionCount > rows[j].ExecutionCount
-		}
-		return rows[i].MaxLatencySec > rows[j].MaxLatencySec
-	})
-	return rows, nil
 }
 
 func (c *Client) runDataProxyQuery(ctx context.Context, clusterID, sql string) ([]map[string]any, error) {
@@ -544,39 +494,6 @@ func summarizeDetailRows(rows []SlowQueryDetailRow) Summary {
 		}
 	}
 	summary.AvgQueryTime = total / float64(len(rows))
-	return summary
-}
-
-func summarizeStatementPlans(rows []StatementPlanRow) Summary {
-	if len(rows) == 0 {
-		return Summary{}
-	}
-
-	var (
-		totalQueries  int64
-		totalLatency  float64
-		uniqueDigests = make(map[string]struct{}, len(rows))
-		maxLatency    float64
-	)
-	for _, row := range rows {
-		totalQueries += row.ExecutionCount
-		totalLatency += row.SumLatencySec
-		if row.MaxLatencySec > maxLatency {
-			maxLatency = row.MaxLatencySec
-		}
-		if row.Digest != "" {
-			uniqueDigests[row.Digest] = struct{}{}
-		}
-	}
-
-	summary := Summary{
-		TotalQueries:  totalQueries,
-		UniqueDigests: int64(len(uniqueDigests)),
-		MaxQueryTime:  maxLatency,
-	}
-	if totalQueries > 0 {
-		summary.AvgQueryTime = totalLatency / float64(totalQueries)
-	}
 	return summary
 }
 

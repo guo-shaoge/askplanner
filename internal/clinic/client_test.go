@@ -171,67 +171,6 @@ func TestFetchSlowQueryContextForDetailQuery(t *testing.T) {
 	}
 }
 
-func TestFetchSlowQueryContextFallsBackToStatementPlans(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/clinic/api/v1/dashboard/clusters":
-			if _, err := io.WriteString(w, `{"items":[{"clusterID":"123","clusterName":"prod-a","tenantName":"Acme","clusterDeployTypeV2":"premium"}]}`); err != nil {
-				t.Fatalf("write clusters response: %v", err)
-			}
-		case r.Method == http.MethodPost && r.URL.Path == "/data-proxy/query":
-			if _, err := io.WriteString(w, `{"columns":["time","digest","plan_digest","query_time","parse_time","compile_time","cop_time","process_time","wait_time","total_keys","process_keys","result_rows","mem_max","disk_max","db","instance","index_names","prev_stmt","plan","decoded_plan","binary_plan","query"],"rows":[]}`); err != nil {
-				t.Fatalf("write empty detail response: %v", err)
-			}
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient("token", 5*time.Second)
-	client.APIBaseURL = server.URL + "/clinic/api/v1"
-	client.DataProxyBase = server.URL
-	client.StatementPlanFetcher = func(context.Context, LinkSpec) ([]StatementPlanRow, error) {
-		return []StatementPlanRow{{
-			Digest:         "digest-1",
-			DigestText:     "set names `utf8mb4`",
-			StatementType:  "Set",
-			Database:       "app",
-			ExecutionCount: 10825,
-			SumLatencySec:  1.028727611,
-			AvgLatencySec:  0.000095032,
-			MaxLatencySec:  0.000304185,
-			LastSeen:       time.Date(2026, 4, 5, 10, 29, 35, 0, time.UTC),
-		}}, nil
-	}
-
-	result, err := client.FetchSlowQueryContext(context.Background(), LinkSpec{
-		RawURL:            "https://clinic.pingcap.com/portal/dashboard/cloud/ngm.html?provider=test&region=test&orgId=1&clusterId=123&deployType=premium#/statement/detail?query=%7B%22digest%22%3A%22digest-1%22%2C%22schema%22%3A%22app%22%2C%22beginTime%22%3A1774222540%2C%22endTime%22%3A1774229740%7D",
-		ClusterID:         "123",
-		StartTime:         time.Date(2026, 4, 5, 8, 0, 0, 0, time.UTC),
-		EndTime:           time.Date(2026, 4, 5, 10, 0, 0, 0, time.UTC),
-		Digest:            "digest-1",
-		Database:          "app",
-		IsDetail:          true,
-		IsStatementDetail: true,
-	})
-	if err != nil {
-		t.Fatalf("FetchSlowQueryContext returned error: %v", err)
-	}
-	if len(result.StatementPlans) != 1 {
-		t.Fatalf("expected statement-plan fallback, got %+v", result)
-	}
-	if result.StatementPlans[0].DigestText != "set names `utf8mb4`" {
-		t.Fatalf("unexpected statement digest text: %+v", result.StatementPlans[0])
-	}
-	if result.Summary.TotalQueries != 10825 || result.Summary.MaxQueryTime <= 0 {
-		t.Fatalf("unexpected derived summary: %+v", result.Summary)
-	}
-	if result.NoRows {
-		t.Fatalf("expected NoRows=false when statement fallback succeeds")
-	}
-}
-
 func TestDoJSONReturnsAuthFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

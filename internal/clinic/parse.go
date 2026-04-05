@@ -20,11 +20,6 @@ var (
 type LinkSpec struct {
 	RawURL            string
 	ClusterID         string
-	Provider          string
-	Region            string
-	OrgID             string
-	ProjectID         string
-	DeployType        string
 	StartTime         time.Time
 	EndTime           time.Time
 	Digest            string
@@ -71,11 +66,6 @@ func parseSlowQueryURL(raw string) (*LinkSpec, bool, error) {
 	spec := &LinkSpec{
 		RawURL:            raw,
 		ClusterID:         firstValue(values, "clusterId", "clusterID", "cluster_id"),
-		Provider:          firstValue(values, "provider"),
-		Region:            firstValue(values, "region"),
-		OrgID:             firstValue(values, "orgId", "orgID", "org_id"),
-		ProjectID:         firstValue(values, "projectId", "projectID", "project_id"),
-		DeployType:        firstValue(values, "deployType", "deploy_type"),
 		Digest:            firstValue(values, "digest", "sqlDigest", "sql_digest", "queryDigest"),
 		Database:          firstValue(values, "db", "database", "schema", "schema_name"),
 		Instance:          firstValue(values, "instance", "tidbAddr", "tidb_addr", "address", "node"),
