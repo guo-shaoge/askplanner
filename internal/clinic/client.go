@@ -367,9 +367,10 @@ func (c *Client) doJSON(ctx context.Context, method, endpoint string, params url
 func buildSummarySQL(spec LinkSpec) string {
 	return fmt.Sprintf(`SELECT
   COUNT(*) AS total_queries,
+  COUNT(DISTINCT digest) AS unique_digests,
   COALESCE(AVG(query_time), 0) AS avg_query_time,
   COALESCE(MAX(query_time), 0) AS max_query_time
-FROM "clinic_data_proxy"."slow_query_logs"
+FROM clinic_data_proxy.slow_query_logs
 WHERE %s`, buildWhereClause(spec))
 }
 
@@ -397,7 +398,7 @@ func buildDetailRowsSQL(spec LinkSpec) string {
   decoded_plan,
   binary_plan,
   query
-FROM "clinic_data_proxy"."slow_query_logs"
+FROM clinic_data_proxy.slow_query_logs
 WHERE %s
 ORDER BY time DESC, query_time DESC
 LIMIT 10`, buildWhereClause(spec))
@@ -412,16 +413,16 @@ func buildTopDigestsSQL(spec LinkSpec) string {
   COALESCE(MAX(result_rows), 0) AS max_result_rows,
   COALESCE(MAX(mem_max), 0) AS max_mem_bytes,
   COALESCE(MAX(disk_max), 0) AS max_disk_bytes,
-  arbitrary(db) AS sample_db,
-  arbitrary(instance) AS sample_instance,
-  arbitrary(index_names) AS sample_indexes,
-  arbitrary(plan_digest) AS sample_plan_digest,
-  arbitrary(prev_stmt) AS sample_prev_stmt,
-  arbitrary(plan) AS sample_plan,
-  arbitrary(decoded_plan) AS sample_decoded_plan,
-  arbitrary(binary_plan) AS sample_binary_plan,
-  arbitrary(query) AS sample_sql
-FROM "clinic_data_proxy"."slow_query_logs"
+  any_value(db) AS sample_db,
+  any_value(instance) AS sample_instance,
+  any_value(index_names) AS sample_indexes,
+  any_value(plan_digest) AS sample_plan_digest,
+  any_value(prev_stmt) AS sample_prev_stmt,
+  any_value(plan) AS sample_plan,
+  any_value(decoded_plan) AS sample_decoded_plan,
+  any_value(binary_plan) AS sample_binary_plan,
+  any_value(query) AS sample_sql
+FROM clinic_data_proxy.slow_query_logs
 WHERE %s
 GROUP BY digest
 ORDER BY max_query_time DESC
