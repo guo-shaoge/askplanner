@@ -18,15 +18,16 @@ var (
 )
 
 type LinkSpec struct {
-	RawURL     string
-	ClusterID  string
-	StartTime  time.Time
-	EndTime    time.Time
-	Digest     string
-	Database   string
-	Instance   string
-	IsDetail   bool
-	AnchorTime time.Time
+	RawURL            string
+	ClusterID         string
+	StartTime         time.Time
+	EndTime           time.Time
+	Digest            string
+	Database          string
+	Instance          string
+	IsDetail          bool
+	IsStatementDetail bool
+	AnchorTime        time.Time
 }
 
 func ParseSlowQueryLink(text string) (*LinkSpec, bool, error) {
@@ -63,12 +64,13 @@ func parseSlowQueryURL(raw string) (*LinkSpec, bool, error) {
 	}
 
 	spec := &LinkSpec{
-		RawURL:    raw,
-		ClusterID: firstValue(values, "clusterId", "clusterID", "cluster_id"),
-		Digest:    firstValue(values, "digest", "sqlDigest", "sql_digest", "queryDigest"),
-		Database:  firstValue(values, "db", "database", "schema", "schema_name"),
-		Instance:  firstValue(values, "instance", "tidbAddr", "tidb_addr", "address", "node"),
-		IsDetail:  isClinicDetailRoute(routeText),
+		RawURL:            raw,
+		ClusterID:         firstValue(values, "clusterId", "clusterID", "cluster_id"),
+		Digest:            firstValue(values, "digest", "sqlDigest", "sql_digest", "queryDigest"),
+		Database:          firstValue(values, "db", "database", "schema", "schema_name"),
+		Instance:          firstValue(values, "instance", "tidbAddr", "tidb_addr", "address", "node"),
+		IsDetail:          isClinicDetailRoute(routeText),
+		IsStatementDetail: isStatementDetailRoute(routeText),
 	}
 
 	start, end, hasExplicitRange, err := parseTimeRange(values)

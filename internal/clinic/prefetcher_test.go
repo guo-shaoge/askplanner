@@ -330,6 +330,46 @@ func TestPrefetcherSupportsStatementDetailLink(t *testing.T) {
 	}
 }
 
+func TestPrefetcherRejectsEmptyStatementDetailSnapshot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/clinic/api/v1/dashboard/clusters":
+			if _, err := io.WriteString(w, `{"items":[{"clusterID":"123","clusterName":"prod-a","tenantName":"Acme","clusterDeployTypeV2":"premium"}]}`); err != nil {
+				t.Fatalf("write clusters response: %v", err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/data-proxy/query":
+			if _, err := io.WriteString(w, `{"columns":["time","digest","plan_digest","query_time","parse_time","compile_time","cop_time","process_time","wait_time","total_keys","process_keys","result_rows","mem_max","disk_max","db","instance","index_names","prev_stmt","plan","decoded_plan","binary_plan","query"],"rows":[]}`); err != nil {
+				t.Fatalf("write empty detail response: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	prefetcher, err := NewPrefetcher(&config.Config{
+		ClinicEnableAutoSlowQuery: true,
+		ClinicHTTPTimeoutSec:      5,
+		ClinicAPIKey:              "token",
+		ClinicStoreDir:            t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("NewPrefetcher: %v", err)
+	}
+	prefetcher.client.APIBaseURL = server.URL + "/clinic/api/v1"
+	prefetcher.client.DataProxyBase = server.URL
+
+	question := "Analyze this SQL statement " + statementDetailTestLink
+	_, err = prefetcher.Enrich(context.Background(), "user-a", question, codex.RuntimeContext{})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	got := UserFacingMessage(err)
+	if !strings.Contains(got, "Statement Detail link") || !strings.Contains(got, "current relay cannot prefetch yet") {
+		t.Fatalf("unexpected user-facing message: %q", got)
+	}
+}
+
 func TestPartitionDatesSingleDay(t *testing.T) {
 	got := partitionDates(
 		time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC),
