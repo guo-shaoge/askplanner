@@ -356,6 +356,55 @@ func writeClinicContext(sb *strings.Builder, clinic *ClinicContext) {
 		sb.WriteString("- Clinic query returned no slow query rows for this exact scope.\n")
 		return
 	}
+	if clinic.IsStatementDetail && len(clinic.StatementPlans) > 0 {
+		sb.WriteString("- Clinic statement-summary detail rows:\n")
+		for _, row := range clinic.StatementPlans {
+			sb.WriteString("  - ")
+			if row.StatementType != "" {
+				sb.WriteString("type=")
+				sb.WriteString(row.StatementType)
+				sb.WriteByte(' ')
+			}
+			if row.Digest != "" {
+				sb.WriteString("digest=")
+				sb.WriteString(row.Digest)
+				sb.WriteByte(' ')
+			}
+			_, _ = fmt.Fprintf(sb, "exec_count=%d avg_latency_sec=%.6f max_latency_sec=%.6f",
+				row.ExecutionCount,
+				row.AvgLatencySec,
+				row.MaxLatencySec,
+			)
+			if row.SumLatencySec > 0 {
+				_, _ = fmt.Fprintf(sb, " sum_latency_sec=%.6f", row.SumLatencySec)
+			}
+			if row.Database != "" {
+				sb.WriteString(" db=")
+				sb.WriteString(row.Database)
+			}
+			if row.PlanDigest != "" {
+				sb.WriteString(" plan_digest=")
+				sb.WriteString(row.PlanDigest)
+			}
+			if row.PlanInBinding {
+				sb.WriteString(" plan_in_binding=true")
+			}
+			if row.PlanHint != "" {
+				sb.WriteString(" plan_hint=")
+				sb.WriteString(compactText(row.PlanHint, 180))
+			}
+			if row.DigestText != "" {
+				sb.WriteString(" digest_text=")
+				sb.WriteString(compactText(row.DigestText, 240))
+			}
+			if !row.LastSeen.IsZero() {
+				sb.WriteString(" last_seen=")
+				sb.WriteString(row.LastSeen.UTC().Format(time.RFC3339))
+			}
+			sb.WriteByte('\n')
+		}
+		return
+	}
 	if clinic.IsDetail && len(clinic.DetailRows) > 0 {
 		sb.WriteString("- Clinic slow-query detail rows:\n")
 		for _, row := range clinic.DetailRows {

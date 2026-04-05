@@ -127,6 +127,54 @@ func TestBuildInitialPromptIncludesClinicContext(t *testing.T) {
 	}
 }
 
+func TestBuildInitialPromptIncludesClinicStatementDetailContext(t *testing.T) {
+	prompt := BuildInitialPrompt("base prompt", "", "analyze this Clinic statement", RuntimeContext{
+		Clinic: &ClinicContext{
+			SourceURL:         "https://clinic.pingcap.com/portal/dashboard/cloud/ngm.html?clusterId=123#/statement/detail?query=...",
+			ClusterID:         "123",
+			ClusterName:       "prod-a",
+			OrgName:           "Acme",
+			DeployType:        "premium",
+			StartTime:         time.Date(2026, 4, 5, 8, 0, 0, 0, time.UTC),
+			EndTime:           time.Date(2026, 4, 5, 10, 0, 0, 0, time.UTC),
+			Digest:            "digest-1",
+			Database:          "app",
+			IsDetail:          true,
+			IsStatementDetail: true,
+			Summary: ClinicSummary{
+				TotalQueries: 10825,
+				AvgQueryTime: 0.000095032,
+				MaxQueryTime: 0.000304185,
+			},
+			StatementPlans: []ClinicStatementPlan{{
+				Digest:         "digest-1",
+				DigestText:     "set names `utf8mb4`",
+				StatementType:  "Set",
+				Database:       "app",
+				ExecutionCount: 10825,
+				SumLatencySec:  1.028727611,
+				AvgLatencySec:  0.000095032,
+				MaxLatencySec:  0.000304185,
+				LastSeen:       time.Date(2026, 4, 5, 10, 29, 35, 0, time.UTC),
+			}},
+		},
+	})
+
+	wantSnippets := []string{
+		"Clinic statement-summary detail rows:",
+		"type=Set",
+		"exec_count=10825",
+		"avg_latency_sec=0.000095",
+		"max_latency_sec=0.000304",
+		"digest_text=set names `utf8mb4`",
+	}
+	for _, snippet := range wantSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("prompt missing %q:\n%s", snippet, prompt)
+		}
+	}
+}
+
 func TestBuildInitialPromptIncludesThreadContext(t *testing.T) {
 	prompt := BuildInitialPrompt("base prompt", "", "what should I reply?", RuntimeContext{
 		Thread: &ThreadContext{

@@ -341,17 +341,18 @@ func toClinicRuntimeContext(analysis *AnalysisContext) *codex.ClinicContext {
 		return nil
 	}
 	ctx := &codex.ClinicContext{
-		SourceURL:   analysis.SourceURL,
-		ClusterID:   analysis.ClusterID,
-		ClusterName: analysis.ClusterName,
-		OrgName:     analysis.OrgName,
-		DeployType:  analysis.DeployType,
-		StartTime:   analysis.StartTime,
-		EndTime:     analysis.EndTime,
-		Digest:      analysis.Digest,
-		Database:    analysis.Database,
-		Instance:    analysis.Instance,
-		IsDetail:    analysis.IsDetail,
+		SourceURL:         analysis.SourceURL,
+		ClusterID:         analysis.ClusterID,
+		ClusterName:       analysis.ClusterName,
+		OrgName:           analysis.OrgName,
+		DeployType:        analysis.DeployType,
+		StartTime:         analysis.StartTime,
+		EndTime:           analysis.EndTime,
+		Digest:            analysis.Digest,
+		Database:          analysis.Database,
+		Instance:          analysis.Instance,
+		IsDetail:          analysis.IsDetail,
+		IsStatementDetail: analysis.IsStatementDetail,
 		Summary: codex.ClinicSummary{
 			TotalQueries:  analysis.Summary.TotalQueries,
 			UniqueDigests: analysis.Summary.UniqueDigests,
@@ -408,6 +409,23 @@ func toClinicRuntimeContext(analysis *AnalysisContext) *codex.ClinicContext {
 			SampleSQL:         item.SampleSQL,
 		})
 	}
+	for _, item := range analysis.StatementPlans {
+		ctx.StatementPlans = append(ctx.StatementPlans, codex.ClinicStatementPlan{
+			Digest:         item.Digest,
+			PlanDigest:     item.PlanDigest,
+			DigestText:     item.DigestText,
+			StatementType:  item.StatementType,
+			Database:       item.Database,
+			ExecutionCount: item.ExecutionCount,
+			SumLatencySec:  item.SumLatencySec,
+			AvgLatencySec:  item.AvgLatencySec,
+			MaxLatencySec:  item.MaxLatencySec,
+			PlanHint:       item.PlanHint,
+			PlanInBinding:  item.PlanInBinding,
+			FirstSeen:      item.FirstSeen,
+			LastSeen:       item.LastSeen,
+		})
+	}
 	return ctx
 }
 
@@ -423,9 +441,17 @@ func buildIntroReply(runtime codex.RuntimeContext, saved bool) string {
 
 	var sb strings.Builder
 	if saved {
-		sb.WriteString("Agent saved this Clinic slow query snapshot locally.\n")
+		if clinic.IsStatementDetail && len(clinic.StatementPlans) > 0 {
+			sb.WriteString("Agent saved this Clinic statement-detail snapshot locally.\n")
+		} else {
+			sb.WriteString("Agent saved this Clinic slow query snapshot locally.\n")
+		}
 	} else {
-		sb.WriteString("Agent fetched this Clinic slow query snapshot for this turn, but couldn't save it locally.\n")
+		if clinic.IsStatementDetail && len(clinic.StatementPlans) > 0 {
+			sb.WriteString("Agent fetched this Clinic statement-detail snapshot for this turn, but couldn't save it locally.\n")
+		} else {
+			sb.WriteString("Agent fetched this Clinic slow query snapshot for this turn, but couldn't save it locally.\n")
+		}
 	}
 	sb.WriteString("- Cluster: ")
 	sb.WriteString(strings.TrimSpace(clinic.ClusterID))
@@ -436,7 +462,11 @@ func buildIntroReply(runtime codex.RuntimeContext, saved bool) string {
 	}
 	sb.WriteByte('\n')
 	if clinic.IsDetail {
-		sb.WriteString("- Scope: detail\n")
+		if clinic.IsStatementDetail && len(clinic.StatementPlans) > 0 {
+			sb.WriteString("- Scope: statement detail\n")
+		} else {
+			sb.WriteString("- Scope: detail\n")
+		}
 	} else {
 		sb.WriteString("- Scope: grouped slow-query list\n")
 	}
@@ -473,7 +503,11 @@ func buildIntroReply(runtime codex.RuntimeContext, saved bool) string {
 		sb.WriteString(runtime.ClinicLibrary.ActiveItemName)
 		sb.WriteByte('\n')
 	}
-	sb.WriteString("Tell me what you want to do next with this slow query, for example: root-cause analysis, plan interpretation, bottleneck summary, or optimization suggestions.")
+	if clinic.IsStatementDetail && len(clinic.StatementPlans) > 0 {
+		sb.WriteString("Tell me what you want to do next with this statement, for example: bottleneck summary, whether it is worth tuning, or optimization suggestions.")
+	} else {
+		sb.WriteString("Tell me what you want to do next with this slow query, for example: root-cause analysis, plan interpretation, bottleneck summary, or optimization suggestions.")
+	}
 	return sb.String()
 }
 

@@ -69,6 +69,46 @@ func BuildStoredSummary(analysis *AnalysisContext) string {
 		return sb.String()
 	}
 
+	if analysis.IsStatementDetail && len(analysis.StatementPlans) > 0 {
+		sb.WriteString("\n## Statement Detail\n\n")
+		for _, row := range analysis.StatementPlans {
+			sb.WriteString("- ")
+			if row.StatementType != "" {
+				sb.WriteString("type=")
+				sb.WriteString(row.StatementType)
+				sb.WriteByte(' ')
+			}
+			if row.Digest != "" {
+				sb.WriteString("digest=")
+				sb.WriteString(row.Digest)
+				sb.WriteByte(' ')
+			}
+			_, _ = fmt.Fprintf(&sb, "exec_count=%d avg_latency_sec=%.6f max_latency_sec=%.6f",
+				row.ExecutionCount,
+				row.AvgLatencySec,
+				row.MaxLatencySec,
+			)
+			if row.Database != "" {
+				sb.WriteString(" db=")
+				sb.WriteString(row.Database)
+			}
+			if row.PlanDigest != "" {
+				sb.WriteString(" plan_digest=")
+				sb.WriteString(row.PlanDigest)
+			}
+			if row.DigestText != "" {
+				sb.WriteString("\n  digest_text: ")
+				sb.WriteString(compactSummaryText(row.DigestText, 400))
+			}
+			if row.PlanHint != "" {
+				sb.WriteString("\n  plan_hint: ")
+				sb.WriteString(compactSummaryText(row.PlanHint, 300))
+			}
+			sb.WriteByte('\n')
+		}
+		return sb.String()
+	}
+
 	if analysis.IsDetail && len(analysis.DetailRows) > 0 {
 		sb.WriteString("\n## Detail Rows\n\n")
 		for _, row := range analysis.DetailRows {
