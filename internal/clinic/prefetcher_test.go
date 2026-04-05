@@ -279,6 +279,57 @@ func TestPrefetcherSkipsIntroReplyWhenQuestionIncludesAnalysisIntent(t *testing.
 	}
 }
 
+func TestPrefetcherSupportsStatementDetailLink(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/clinic/api/v1/dashboard/clusters":
+			if _, err := io.WriteString(w, `{"items":[{"clusterID":"10892260000245137880","clusterName":"prod-a","tenantName":"Acme","clusterDeployTypeV2":"premium"}]}`); err != nil {
+				t.Fatalf("write clusters response: %v", err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/data-proxy/query":
+			if _, err := io.WriteString(w, `{"columns":["time","digest","plan_digest","query_time","parse_time","compile_time","cop_time","process_time","wait_time","total_keys","process_keys","result_rows","mem_max","disk_max","db","instance","index_names","prev_stmt","plan","decoded_plan","binary_plan","query"],"rows":[[1774222600,"a8a6b4f9d3900524e8677581f50e3151d8127a7798d9dd1ec801b567c339a37d","plan-digest-1",7.5,0.1,0.2,2.5,1.5,0.3,1000,800,10,2048,0,"wallet_db","tidb-0","idx_a","begin","IndexLookUp_1 root 10.00","IndexLookUp(Build)","binary-plan-text","select * from t where a = 1"]]}`); err != nil {
+				t.Fatalf("write detail response: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	prefetcher, err := NewPrefetcher(&config.Config{
+		ClinicEnableAutoSlowQuery: true,
+		ClinicHTTPTimeoutSec:      5,
+		ClinicAPIKey:              "token",
+		ClinicStoreDir:            t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("NewPrefetcher: %v", err)
+	}
+	prefetcher.client.APIBaseURL = server.URL + "/clinic/api/v1"
+	prefetcher.client.DataProxyBase = server.URL
+
+	question := "Analyze this SQL statement https://clinic.pingcap.com/portal/dashboard/cloud/ngm.html?provider=alicloud&clusterId=10892260000245137880#/statement/detail?query=%7B%22digest%22%3A%22a8a6b4f9d3900524e8677581f50e3151d8127a7798d9dd1ec801b567c339a37d%22%2C%22schema%22%3A%22wallet_db%22%2C%22beginTime%22%3A1774222540%2C%22endTime%22%3A1774229740%7D"
+	enriched, err := prefetcher.Enrich(context.Background(), "user-a", question, codex.RuntimeContext{})
+	if err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+	if enriched.RuntimeContext.Clinic == nil {
+		t.Fatalf("expected clinic context")
+	}
+	if got := enriched.RuntimeContext.Clinic.ClusterID; got != "10892260000245137880" {
+		t.Fatalf("cluster ID = %q", got)
+	}
+	if got := enriched.RuntimeContext.Clinic.Digest; got != "a8a6b4f9d3900524e8677581f50e3151d8127a7798d9dd1ec801b567c339a37d" {
+		t.Fatalf("digest = %q", got)
+	}
+	if got := enriched.RuntimeContext.Clinic.Database; got != "wallet_db" {
+		t.Fatalf("database = %q", got)
+	}
+	if enriched.IntroReply != "" {
+		t.Fatalf("expected analysis intent to skip intro reply, got %q", enriched.IntroReply)
+	}
+}
+
 func TestPartitionDatesSingleDay(t *testing.T) {
 	got := partitionDates(
 		time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC),
