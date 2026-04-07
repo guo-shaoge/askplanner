@@ -105,7 +105,7 @@ func Load() (*Config, error) {
 		WorkspaceRepoTidbDocsDefaultRef:   envOrDefault("WORKSPACE_REPO_TIDB_DOCS_DEFAULT_REF", "master"),
 		ClinicEnableAutoSlowQuery:         envAsBool("CLINIC_ENABLE_AUTO_SLOWQUERY", false),
 		ClinicAPIKey:                      strings.TrimSpace(os.Getenv("CLINIC_API_KEY")),
-		ClinicHTTPTimeoutSec:              envAsInt("CLINIC_HTTP_TIMEOUT_SEC", 15),
+		ClinicHTTPTimeoutSec:              envAsInt("CLINIC_HTTP_TIMEOUT_SEC", 75),
 		ClinicStoreDir:                    resolvePath(projectRoot, clinicStoreDir),
 		ClinicStoreMaxItems:               envAsInt("CLINIC_STORE_MAX_ITEMS", 50),
 		LogFile:                           resolvePath(projectRoot, envOrDefault("LOG_FILE", ".askplanner/askplanner.log")),
