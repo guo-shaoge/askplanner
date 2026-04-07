@@ -369,7 +369,7 @@ func buildSummarySQL(spec LinkSpec) string {
   COUNT(*) AS total_queries,
   COALESCE(AVG(query_time), 0) AS avg_query_time,
   COALESCE(MAX(query_time), 0) AS max_query_time
-FROM "clinic_data_proxy"."slow_query_logs"
+FROM slow_query_logs
 WHERE %s`, buildWhereClause(spec))
 }
 
@@ -397,7 +397,7 @@ func buildDetailRowsSQL(spec LinkSpec) string {
   decoded_plan,
   binary_plan,
   query
-FROM "clinic_data_proxy"."slow_query_logs"
+FROM slow_query_logs
 WHERE %s
 ORDER BY time DESC, query_time DESC
 LIMIT 10`, buildWhereClause(spec))
@@ -421,7 +421,7 @@ func buildTopDigestsSQL(spec LinkSpec) string {
   arbitrary(decoded_plan) AS sample_decoded_plan,
   arbitrary(binary_plan) AS sample_binary_plan,
   arbitrary(query) AS sample_sql
-FROM "clinic_data_proxy"."slow_query_logs"
+FROM slow_query_logs
 WHERE %s
 GROUP BY digest
 ORDER BY max_query_time DESC

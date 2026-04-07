@@ -35,6 +35,27 @@ func TestBuildWhereClauseIncludesPartitionsAndFilters(t *testing.T) {
 	}
 }
 
+func TestBuildSlowQuerySQLUsesDataProxyCompatibleTableName(t *testing.T) {
+	spec := LinkSpec{
+		ClusterID: "123",
+		StartTime: time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 3, 20, 11, 0, 0, 0, time.UTC),
+	}
+
+	for name, sql := range map[string]string{
+		"summary":     buildSummarySQL(spec),
+		"detail_rows": buildDetailRowsSQL(spec),
+		"top_digests": buildTopDigestsSQL(spec),
+	} {
+		if strings.Contains(sql, `"clinic_data_proxy"."slow_query_logs"`) {
+			t.Fatalf("%s SQL uses unsupported quoted table name: %s", name, sql)
+		}
+		if !strings.Contains(sql, "FROM slow_query_logs") {
+			t.Fatalf("%s SQL should query slow_query_logs directly: %s", name, sql)
+		}
+	}
+}
+
 func TestFetchSlowQueryContext(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
