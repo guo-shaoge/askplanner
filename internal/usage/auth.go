@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -9,6 +10,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +24,8 @@ const (
 	usageAuthFailureLimit  = 6
 	usageAuthBlockDuration = 5 * time.Minute
 	usageAuthEntryTTL      = 15 * time.Minute
+	usageSessionTTL        = 12 * time.Hour
+	usageSessionCookieName = "askplanner_usage_session"
 )
 
 type usageAccessControl struct {
@@ -82,40 +87,150 @@ func (a *usageAccessControl) Wrap(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			a.handleLogin(w, r)
+			return
+		case "/logout":
+			a.handleLogout(w, r)
+			return
+		}
+
 		clientIP := requestClientIP(r)
 		if a.failures.IsBlocked(clientIP) {
 			writeAuthRateLimited(w)
 			return
 		}
-
-		username, password, ok := r.BasicAuth()
-		if ok && compareSHA256(a.usernameHash, username) && compareSHA256(a.passwordHash, password) {
+		if a.isAuthorized(r) {
 			a.failures.Reset(clientIP)
 			next.ServeHTTP(w, r)
 			return
 		}
-
-		if blocked := a.failures.RecordFailure(clientIP); blocked {
-			log.Printf("[usage] auth rate limited ip=%s", clientIP)
-			writeAuthRateLimited(w)
-			return
-		}
-		writeAuthChallenge(w, a.realm)
+		redirectToLogin(w, r)
 	})
+}
+
+func (a *usageAccessControl) isAuthorized(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	username, password, ok := r.BasicAuth()
+	if ok && compareSHA256(a.usernameHash, username) && compareSHA256(a.passwordHash, password) {
+		return true
+	}
+	cookie, err := r.Cookie(usageSessionCookieName)
+	if err != nil || cookie == nil {
+		return false
+	}
+	return a.validSessionToken(strings.TrimSpace(cookie.Value))
+}
+
+func (a *usageAccessControl) handleLogin(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		writeLoginPage(w, http.StatusOK, a.realm, sanitizeNextPath(r.URL.Query().Get("next")), "")
+	case http.MethodPost:
+		a.handleLoginPost(w, r)
+	default:
+		w.Header().Set("Allow", "GET, HEAD, POST")
+		http.Error(w, "method not allowed\n", http.StatusMethodNotAllowed)
+	}
+}
+
+func (a *usageAccessControl) handleLoginPost(w http.ResponseWriter, r *http.Request) {
+	clientIP := requestClientIP(r)
+	if a.failures.IsBlocked(clientIP) {
+		writeAuthRateLimited(w)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeLoginPage(w, http.StatusBadRequest, a.realm, sanitizeNextPath(r.FormValue("next")), "Invalid login request.")
+		return
+	}
+
+	nextPath := sanitizeNextPath(r.FormValue("next"))
+	username := r.FormValue("username")
+	password := r.FormValue("password")
+	if compareSHA256(a.usernameHash, username) && compareSHA256(a.passwordHash, password) {
+		a.failures.Reset(clientIP)
+		http.SetCookie(w, a.newSessionCookie())
+		http.Redirect(w, r, nextPath, http.StatusSeeOther)
+		return
+	}
+
+	if blocked := a.failures.RecordFailure(clientIP); blocked {
+		log.Printf("[usage] auth rate limited ip=%s", clientIP)
+		writeAuthRateLimited(w)
+		return
+	}
+	writeLoginPage(w, http.StatusUnauthorized, a.realm, nextPath, "Login failed. Contact guojiangtao for access.")
+}
+
+func (a *usageAccessControl) handleLogout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     usageSessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0).UTC(),
+	})
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+func redirectToLogin(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/login?next="+url.QueryEscape(sanitizeNextPath(r.URL.RequestURI())), http.StatusSeeOther)
+}
+
+func sanitizeNextPath(next string) string {
+	next = strings.TrimSpace(next)
+	if next == "" || next == "/login" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		return "/"
+	}
+	return next
+}
+
+func (a *usageAccessControl) newSessionCookie() *http.Cookie {
+	expiresAt := time.Now().Add(usageSessionTTL).UTC()
+	return &http.Cookie{
+		Name:     usageSessionCookieName,
+		Value:    a.signSessionToken(expiresAt),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  expiresAt,
+		MaxAge:   int(usageSessionTTL.Seconds()),
+	}
+}
+
+func (a *usageAccessControl) signSessionToken(expiresAt time.Time) string {
+	payload := strconv.FormatInt(expiresAt.Unix(), 10)
+	mac := hmac.New(sha256.New, a.passwordHash[:])
+	_, _ = mac.Write([]byte(payload))
+	_, _ = mac.Write(a.usernameHash[:])
+	return payload + "." + hex.EncodeToString(mac.Sum(nil))
+}
+
+func (a *usageAccessControl) validSessionToken(token string) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 {
+		return false
+	}
+	expiresAtUnix, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+	if err != nil || expiresAtUnix <= 0 {
+		return false
+	}
+	if time.Now().After(time.Unix(expiresAtUnix, 0).UTC()) {
+		return false
+	}
+	expected := a.signSessionToken(time.Unix(expiresAtUnix, 0).UTC())
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(token)) == 1
 }
 
 func compareSHA256(expected [32]byte, value string) bool {
 	actual := sha256.Sum256([]byte(value))
 	return subtle.ConstantTimeCompare(expected[:], actual[:]) == 1
-}
-
-func writeAuthChallenge(w http.ResponseWriter, realm string) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Basic realm=%q, charset="UTF-8"`, realm))
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusUnauthorized)
-	_, _ = w.Write([]byte(renderUsageAuthPage("Authentication Required", "Reload this page to open the browser login prompt. Contact guojiangtao for access.")))
 }
 
 func writeAuthRateLimited(w http.ResponseWriter) {
@@ -124,10 +239,18 @@ func writeAuthRateLimited(w http.ResponseWriter) {
 	w.Header().Set("Retry-After", "300")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusTooManyRequests)
-	_, _ = w.Write([]byte(renderUsageAuthPage("Too Many Attempts", "Too many authentication attempts were detected. Wait a few minutes, then try again.")))
+	_, _ = w.Write([]byte(renderUsageAuthPage("Too Many Attempts", "askplanner dashboard", "Too many login attempts were detected. Wait a few minutes before trying again.", "", true)))
 }
 
-func renderUsageAuthPage(title, message string) string {
+func writeLoginPage(w http.ResponseWriter, statusCode int, realm, nextPath, errorMessage string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(statusCode)
+	_, _ = w.Write([]byte(renderUsageAuthPage("Sign In", realm, errorMessage, nextPath, false)))
+}
+
+func renderUsageAuthPage(title, realm, errorMessage, nextPath string, locked bool) string {
 	const page = `<!doctype html>
 <html lang="en">
 <head>
@@ -186,13 +309,79 @@ func renderUsageAuthPage(title, message string) string {
       font-size: 16px;
       line-height: 1.55;
     }
+    form {
+      display: grid;
+      gap: 12px;
+      margin-top: 22px;
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    input {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.96);
+      color: var(--ink);
+      font: inherit;
+    }
+    button {
+      width: 100%;
+      margin-top: 4px;
+      padding: 12px 14px;
+      border: 0;
+      border-radius: 14px;
+      background: linear-gradient(90deg, #f0a46f, #d86b29);
+      color: #fff;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .note {
+      margin-top: 14px;
+      font-size: 14px;
+    }
+    .alert {
+      margin-top: 18px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(180,74,24,0.18);
+      background: rgba(255,228,213,0.72);
+      color: #8d3411;
+      font-size: 14px;
+      line-height: 1.45;
+    }
   </style>
 </head>
 <body>
   <main>
     <p class="kicker">askplanner dashboard</p>
     <h1>{{.Title}}</h1>
-    <p>{{.Message}}</p>
+    <p>{{.Realm}}</p>
+    {{if .ErrorMessage}}<div class="alert">{{.ErrorMessage}}</div>{{end}}
+    {{if .Locked}}
+    <p class="note">Too many login attempts were detected from this source. Wait a few minutes before trying again.</p>
+    {{else}}
+    <form method="post" action="/login">
+      <input type="hidden" name="next" value="{{.NextPath}}">
+      <label>
+        Username
+        <input type="text" name="username" autocomplete="username" required autofocus>
+      </label>
+      <label>
+        Password
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit">Sign In</button>
+    </form>
+    <p class="note">Contact guojiangtao for the password if you do not already have it.</p>
+    {{end}}
   </main>
 </body>
 </html>
@@ -201,11 +390,17 @@ func renderUsageAuthPage(title, message string) string {
 	var out strings.Builder
 	tpl := template.Must(template.New("usage_auth_page").Parse(page))
 	_ = tpl.Execute(&out, struct {
-		Title   string
-		Message string
+		Title        string
+		Realm        string
+		ErrorMessage string
+		NextPath     string
+		Locked       bool
 	}{
-		Title:   title,
-		Message: message,
+		Title:        title,
+		Realm:        realm,
+		ErrorMessage: errorMessage,
+		NextPath:     nextPath,
+		Locked:       locked,
 	})
 	return out.String()
 }
