@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"html/template"
 	"log"
 	"net"
 	"net/http"
@@ -110,18 +111,103 @@ func compareSHA256(expected [32]byte, value string) bool {
 
 func writeAuthChallenge(w http.ResponseWriter, realm string) {
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Basic realm=%q, charset="UTF-8"`, realm))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	http.Error(w, "authentication required; contact guojiangtao for access\n", http.StatusUnauthorized)
+	w.WriteHeader(http.StatusUnauthorized)
+	_, _ = w.Write([]byte(renderUsageAuthPage("Authentication Required", "Reload this page to open the browser login prompt. Contact guojiangtao for access.")))
 }
 
 func writeAuthRateLimited(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Retry-After", "300")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	http.Error(w, "too many authentication attempts\n", http.StatusTooManyRequests)
+	w.WriteHeader(http.StatusTooManyRequests)
+	_, _ = w.Write([]byte(renderUsageAuthPage("Too Many Attempts", "Too many authentication attempts were detected. Wait a few minutes, then try again.")))
+}
+
+func renderUsageAuthPage(title, message string) string {
+	const page = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3efe5;
+      --panel: rgba(255,255,255,0.92);
+      --ink: #16212b;
+      --muted: #5f6c77;
+      --line: rgba(22,33,43,0.1);
+      --accent: #b44a18;
+      --shadow: 0 18px 60px rgba(42, 35, 23, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(224, 140, 76, 0.26), transparent 28%),
+        radial-gradient(circle at top right, rgba(14, 109, 115, 0.16), transparent 24%),
+        linear-gradient(180deg, #faf7f1 0%, var(--bg) 100%);
+    }
+    main {
+      width: min(100%, 560px);
+      padding: 28px 28px 24px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .kicker {
+      margin: 0 0 10px;
+      color: var(--accent);
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(28px, 5vw, 44px);
+      line-height: 0.98;
+    }
+    p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="kicker">askplanner dashboard</p>
+    <h1>{{.Title}}</h1>
+    <p>{{.Message}}</p>
+  </main>
+</body>
+</html>
+`
+
+	var out strings.Builder
+	tpl := template.Must(template.New("usage_auth_page").Parse(page))
+	_ = tpl.Execute(&out, struct {
+		Title   string
+		Message string
+	}{
+		Title:   title,
+		Message: message,
+	})
+	return out.String()
 }
 
 func requestClientIP(r *http.Request) string {

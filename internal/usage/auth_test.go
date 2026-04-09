@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,8 +42,11 @@ func TestUsageAccessControlRejectsUnauthorizedRequests(t *testing.T) {
 	if got := rec.Header().Get("WWW-Authenticate"); got == "" {
 		t.Fatal("missing WWW-Authenticate header")
 	}
-	if body := rec.Body.String(); body == "" {
-		t.Fatal("missing auth response body")
+	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("content-type = %q, want html", got)
+	}
+	if body := rec.Body.String(); !containsAll(body, "<!doctype html>", "Contact guojiangtao for access.") {
+		t.Fatalf("unexpected auth response body: %q", body)
 	}
 }
 
@@ -97,6 +101,9 @@ func TestUsageAccessControlRateLimitsRepeatedFailures(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("blocked status = %d, want %d", rec.Code, http.StatusTooManyRequests)
 	}
+	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("content-type = %q, want html", got)
+	}
 
 	now = now.Add(usageAuthBlockDuration + time.Second)
 	req = httptest.NewRequest(http.MethodGet, "/", nil)
@@ -107,6 +114,15 @@ func TestUsageAccessControlRateLimitsRepeatedFailures(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status after cooldown = %d, want %d", rec.Code, http.StatusOK)
 	}
+}
+
+func containsAll(s string, parts ...string) bool {
+	for _, part := range parts {
+		if !strings.Contains(s, part) {
+			return false
+		}
+	}
+	return true
 }
 
 func testUsageAuthConfig(password string) *config.Config {
