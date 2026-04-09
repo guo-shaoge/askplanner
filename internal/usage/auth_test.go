@@ -67,6 +67,9 @@ func TestUsageAccessControlServesLoginPage(t *testing.T) {
 	if body := rec.Body.String(); !containsAll(body, "<!doctype html>", "Contact guojiangtao for the password", `value="/questions"`) {
 		t.Fatalf("unexpected login page body: %q", body)
 	}
+	if strings.Contains(rec.Body.String(), "Username") {
+		t.Fatalf("login page should not render username field: %q", rec.Body.String())
+	}
 }
 
 func TestUsageAccessControlCreatesSessionCookieOnSuccessfulLogin(t *testing.T) {
@@ -76,7 +79,6 @@ func TestUsageAccessControlCreatesSessionCookieOnSuccessfulLogin(t *testing.T) {
 	}
 
 	form := url.Values{
-		"username": []string{"askplanner"},
 		"password": []string{"secret"},
 		"next":     []string{"/healthz"},
 	}
@@ -119,7 +121,7 @@ func TestUsageAccessControlStillAllowsBasicAuth(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.SetBasicAuth("askplanner", "secret")
+	req.SetBasicAuth("", "secret")
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
 
@@ -143,7 +145,6 @@ func TestUsageAccessControlRateLimitsRepeatedLoginFailures(t *testing.T) {
 
 	for i := 0; i < usageAuthFailureLimit; i++ {
 		form := url.Values{
-			"username": []string{"askplanner"},
 			"password": []string{"wrong"},
 		}
 		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
@@ -157,7 +158,6 @@ func TestUsageAccessControlRateLimitsRepeatedLoginFailures(t *testing.T) {
 	}
 
 	form := url.Values{
-		"username": []string{"askplanner"},
 		"password": []string{"wrong"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
@@ -174,7 +174,6 @@ func TestUsageAccessControlRateLimitsRepeatedLoginFailures(t *testing.T) {
 
 	now = now.Add(usageAuthBlockDuration + time.Second)
 	form = url.Values{
-		"username": []string{"askplanner"},
 		"password": []string{"secret"},
 	}
 	req = httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))

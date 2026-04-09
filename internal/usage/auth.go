@@ -29,7 +29,6 @@ const (
 )
 
 type usageAccessControl struct {
-	usernameHash [32]byte
 	passwordHash [32]byte
 	realm        string
 	failures     *usageAuthFailures
@@ -61,18 +60,13 @@ func newUsageAccessControl(cfg *config.Config) (*usageAccessControl, error) {
 		return nil, fmt.Errorf("usage auth password hash must be %d bytes", sha256.Size)
 	}
 
-	username := strings.TrimSpace(cfg.UsageAuthUsername)
-	if username == "" {
-		username = "askplanner"
-	}
 	realm := strings.TrimSpace(cfg.UsageAuthRealm)
 	if realm == "" {
 		realm = "askplanner dashboard - contact guojiangtao for access"
 	}
 
 	control := &usageAccessControl{
-		usernameHash: sha256.Sum256([]byte(username)),
-		realm:        realm,
+		realm: realm,
 		failures: &usageAuthFailures{
 			now:     time.Now,
 			entries: make(map[string]usageAuthFailure),
@@ -114,8 +108,8 @@ func (a *usageAccessControl) isAuthorized(r *http.Request) bool {
 	if r == nil {
 		return false
 	}
-	username, password, ok := r.BasicAuth()
-	if ok && compareSHA256(a.usernameHash, username) && compareSHA256(a.passwordHash, password) {
+	_, password, ok := r.BasicAuth()
+	if ok && compareSHA256(a.passwordHash, password) {
 		return true
 	}
 	cookie, err := r.Cookie(usageSessionCookieName)
@@ -149,9 +143,8 @@ func (a *usageAccessControl) handleLoginPost(w http.ResponseWriter, r *http.Requ
 	}
 
 	nextPath := sanitizeNextPath(r.FormValue("next"))
-	username := r.FormValue("username")
 	password := r.FormValue("password")
-	if compareSHA256(a.usernameHash, username) && compareSHA256(a.passwordHash, password) {
+	if compareSHA256(a.passwordHash, password) {
 		a.failures.Reset(clientIP)
 		http.SetCookie(w, a.newSessionCookie())
 		http.Redirect(w, r, nextPath, http.StatusSeeOther)
@@ -208,7 +201,6 @@ func (a *usageAccessControl) signSessionToken(expiresAt time.Time) string {
 	payload := strconv.FormatInt(expiresAt.Unix(), 10)
 	mac := hmac.New(sha256.New, a.passwordHash[:])
 	_, _ = mac.Write([]byte(payload))
-	_, _ = mac.Write(a.usernameHash[:])
 	return payload + "." + hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -371,12 +363,8 @@ func renderUsageAuthPage(title, realm, errorMessage, nextPath string, locked boo
     <form method="post" action="/login">
       <input type="hidden" name="next" value="{{.NextPath}}">
       <label>
-        Username
-        <input type="text" name="username" autocomplete="username" required autofocus>
-      </label>
-      <label>
         Password
-        <input type="password" name="password" autocomplete="current-password" required>
+        <input type="password" name="password" autocomplete="current-password" required autofocus>
       </label>
       <button type="submit">Sign In</button>
     </form>
