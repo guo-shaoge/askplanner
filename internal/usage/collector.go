@@ -129,6 +129,19 @@ type UserSummary struct {
 	LastConversation string    `json:"-"`
 }
 
+type NamedUserSummary struct {
+	UserName         string    `json:"user_name"`
+	NameResolved     bool      `json:"name_resolved"`
+	AccountCount     int       `json:"account_count"`
+	Accounts         []string  `json:"accounts"`
+	Sources          []string  `json:"sources"`
+	QuestionCount    int       `json:"question_count"`
+	QuestionCount24H int       `json:"question_count_24h"`
+	QuestionCount7D  int       `json:"question_count_7d"`
+	LastAskedAt      time.Time `json:"last_asked_at"`
+	RecentQuestion   string    `json:"recent_question"`
+}
+
 type QuestionView struct {
 	EventID         string    `json:"event_id"`
 	AskedAt         time.Time `json:"asked_at"`
@@ -173,6 +186,20 @@ type UsersPage struct {
 type UserQuery struct {
 	Page     int
 	PageSize int
+}
+
+type NamedUsersPage struct {
+	Items      []NamedUserSummary `json:"items"`
+	Page       int                `json:"page"`
+	PageSize   int                `json:"page_size"`
+	TotalItems int                `json:"total_items"`
+	TotalPages int                `json:"total_pages"`
+}
+
+type NamedUserQuery struct {
+	Page     int
+	PageSize int
+	Query    string
 }
 
 type workspaceMetadata struct {
@@ -306,6 +333,25 @@ func (c *Collector) UsersPage(query UserQuery) (*UsersPage, error) {
 	start, end, totalPages := paginateBounds(len(users), page, pageSize)
 	return &UsersPage{
 		Items:      c.enrichUsers(context.Background(), append([]UserSummary(nil), users[start:end]...)),
+		Page:       page,
+		PageSize:   pageSize,
+		TotalItems: len(users),
+		TotalPages: totalPages,
+	}, nil
+}
+
+func (c *Collector) NamedUsersPage(query NamedUserQuery) (*NamedUsersPage, error) {
+	questions, err := c.loadQuestions()
+	if err != nil {
+		return nil, err
+	}
+	userNames := c.userNamesForQuestions(context.Background(), questions)
+	users := aggregateUsersByName(c.now().UTC(), questions, userNames)
+	users = filterNamedUsers(users, query.Query)
+	page, pageSize := normalizePagination(query.Page, query.PageSize)
+	start, end, totalPages := paginateBounds(len(users), page, pageSize)
+	return &NamedUsersPage{
+		Items:      append([]NamedUserSummary(nil), users[start:end]...),
 		Page:       page,
 		PageSize:   pageSize,
 		TotalItems: len(users),
@@ -617,6 +663,76 @@ func topUsers(users []UserSummary, limit int) []UserSummary {
 	return append([]UserSummary(nil), users[:limit]...)
 }
 
+func aggregateUsersByName(now time.Time, questions []QuestionEvent, userNames map[string]string) []NamedUserSummary {
+	type aggregate struct {
+		NamedUserSummary
+		accountSet map[string]struct{}
+		sourceSet  map[string]struct{}
+	}
+
+	preferredNames := preferredUserNamesByIdentity(questions, userNames)
+	users := map[string]*aggregate{}
+	for _, event := range questions {
+		userKey := strings.TrimSpace(event.UserKey)
+		if userKey == "" {
+			continue
+		}
+		identityKey := userIdentityKey(event.Source, userKey)
+		name := strings.TrimSpace(preferredNames[identityKey])
+		nameResolved := name != ""
+		if !nameResolved {
+			name = userKey
+		}
+		groupKey := namedUserGroupKey(name, nameResolved, identityKey)
+		item, ok := users[groupKey]
+		if !ok {
+			item = &aggregate{
+				NamedUserSummary: NamedUserSummary{
+					UserName:     name,
+					NameResolved: nameResolved,
+				},
+				accountSet: map[string]struct{}{},
+				sourceSet:  map[string]struct{}{},
+			}
+			users[groupKey] = item
+		}
+		item.QuestionCount++
+		if within(now, event.AskedAt, 24*time.Hour) {
+			item.QuestionCount24H++
+		}
+		if within(now, event.AskedAt, 7*24*time.Hour) {
+			item.QuestionCount7D++
+		}
+		item.accountSet[identityKey] = struct{}{}
+		item.sourceSet[normalizeSource(event.Source)] = struct{}{}
+		if event.AskedAt.After(item.LastAskedAt) {
+			item.LastAskedAt = event.AskedAt
+			item.RecentQuestion = compactText(event.Question, 120)
+		}
+	}
+
+	result := make([]NamedUserSummary, 0, len(users))
+	for _, item := range users {
+		item.AccountCount = len(item.accountSet)
+		item.Accounts = sortedKeys(item.accountSet)
+		item.Sources = sortedKeys(item.sourceSet)
+		result = append(result, item.NamedUserSummary)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].QuestionCount == result[j].QuestionCount {
+			if result[i].LastAskedAt.Equal(result[j].LastAskedAt) {
+				if result[i].NameResolved != result[j].NameResolved {
+					return result[i].NameResolved
+				}
+				return strings.ToLower(result[i].UserName) < strings.ToLower(result[j].UserName)
+			}
+			return result[i].LastAskedAt.After(result[j].LastAskedAt)
+		}
+		return result[i].QuestionCount > result[j].QuestionCount
+	})
+	return result
+}
+
 func buildRecentSessions(sessions map[string]codex.SessionRecord) []SessionView {
 	items := make([]SessionView, 0, len(sessions))
 	for _, session := range sessions {
@@ -706,6 +822,26 @@ func filterQuestions(questions []QuestionEvent, query QuestionQuery, userNames m
 			}
 		}
 		result = append(result, event)
+	}
+	return result
+}
+
+func filterNamedUsers(users []NamedUserSummary, query string) []NamedUserSummary {
+	needle := strings.ToLower(strings.TrimSpace(query))
+	if needle == "" {
+		return users
+	}
+	result := make([]NamedUserSummary, 0, len(users))
+	for _, item := range users {
+		haystack := strings.ToLower(
+			item.UserName + " " +
+				strings.Join(item.Accounts, " ") + " " +
+				strings.Join(item.Sources, " ") + " " +
+				item.RecentQuestion,
+		)
+		if strings.Contains(haystack, needle) {
+			result = append(result, item)
+		}
 	}
 	return result
 }
@@ -896,6 +1032,45 @@ func userLookupKey(source, userKey, conversationKey string) string {
 	}, "\x00")
 }
 
+func userIdentityKey(source, userKey string) string {
+	return strings.TrimSpace(normalizeSource(source)) + ":" + strings.TrimSpace(userKey)
+}
+
+func preferredUserNamesByIdentity(questions []QuestionEvent, userNames map[string]string) map[string]string {
+	type preferredName struct {
+		name    string
+		askedAt time.Time
+	}
+
+	result := make(map[string]string, len(questions))
+	preferred := make(map[string]preferredName, len(questions))
+	for _, event := range questions {
+		name := strings.TrimSpace(userNames[userLookupKey(event.Source, event.UserKey, event.ConversationKey)])
+		if name == "" {
+			continue
+		}
+		key := userIdentityKey(event.Source, event.UserKey)
+		current, ok := preferred[key]
+		if !ok || event.AskedAt.After(current.askedAt) {
+			preferred[key] = preferredName{
+				name:    name,
+				askedAt: event.AskedAt,
+			}
+		}
+	}
+	for key, item := range preferred {
+		result[key] = item.name
+	}
+	return result
+}
+
+func namedUserGroupKey(name string, resolved bool, identityKey string) string {
+	if resolved {
+		return "name:" + strings.ToLower(strings.TrimSpace(name))
+	}
+	return "identity:" + strings.TrimSpace(identityKey)
+}
+
 func sortNamedValues(counts map[string]int) []NamedValue {
 	items := make([]NamedValue, 0, len(counts))
 	for name, value := range counts {
@@ -907,6 +1082,15 @@ func sortNamedValues(counts map[string]int) []NamedValue {
 		}
 		return items[i].Value > items[j].Value
 	})
+	return items
+}
+
+func sortedKeys(values map[string]struct{}) []string {
+	items := make([]string, 0, len(values))
+	for value := range values {
+		items = append(items, value)
+	}
+	sort.Strings(items)
 	return items
 }
 
