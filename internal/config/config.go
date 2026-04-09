@@ -51,9 +51,12 @@ type Config struct {
 	UsageServerLogFile string // absolute path
 
 	// Usage dashboard
-	UsageHTTPAddr      string
-	UsageLogTailBytes  int
-	UsageQuestionsPath string
+	UsageHTTPAddr           string
+	UsageLogTailBytes       int
+	UsageQuestionsPath      string
+	UsageAuthUsername       string
+	UsageAuthPasswordSHA256 string
+	UsageAuthRealm          string
 
 	// Lark (larkbot only)
 	LarkBots                []LarkBotConfig
@@ -113,6 +116,9 @@ func Load() (*Config, error) {
 		UsageHTTPAddr:                     strings.TrimSpace(envOrDefault("USAGE_HTTP_ADDR", "127.0.0.1:18080")),
 		UsageLogTailBytes:                 envAsInt("USAGE_LOG_TAIL_BYTES", 4*1024*1024),
 		UsageQuestionsPath:                resolvePath(projectRoot, envOrDefault("USAGE_QUESTIONS_PATH", ".askplanner/usage_questions.jsonl")),
+		UsageAuthUsername:                 strings.TrimSpace(envOrDefault("USAGE_AUTH_USERNAME", "askplanner")),
+		UsageAuthPasswordSHA256:           strings.ToLower(strings.TrimSpace(os.Getenv("USAGE_AUTH_PASSWORD_SHA256"))),
+		UsageAuthRealm:                    strings.TrimSpace(envOrDefault("USAGE_AUTH_REALM", "askplanner dashboard - contact guojiangtao for access")),
 		FeishuAppID:                       os.Getenv("FEISHU_APP_ID"),
 		FeishuAppSecret:                   os.Getenv("FEISHU_APP_SECRET"),
 		FeishuBotName:                     strings.ToLower(strings.TrimSpace(envOrDefault("FEISHU_BOT_NAME", "askplanner"))),
@@ -126,6 +132,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.LarkBots = larkBots
+	if cfg.UsageAuthPasswordSHA256 != "" {
+		if len(cfg.UsageAuthPasswordSHA256) != 64 || !isLowerHex(cfg.UsageAuthPasswordSHA256) {
+			return nil, fmt.Errorf("USAGE_AUTH_PASSWORD_SHA256 must be a 64-character lowercase hex SHA-256 digest")
+		}
+	}
 	return cfg, nil
 }
 
@@ -282,4 +293,16 @@ func resolvePath(projectRoot, path string) string {
 		return path
 	}
 	return filepath.Join(projectRoot, path)
+}
+
+func isLowerHex(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
 }

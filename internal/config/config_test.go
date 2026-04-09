@@ -105,3 +105,24 @@ func TestLoadUsesProjectRootFallbackInTempDir(t *testing.T) {
 		t.Fatalf("UsageServerLogFile = %q, want suffix %q", got, want)
 	}
 }
+
+func TestLoadRejectsInvalidUsageAuthHash(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(root+"/prompt", []byte("prompt"), 0o644); err != nil {
+		t.Fatalf("write prompt: %v", err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Setenv("USAGE_AUTH_PASSWORD_SHA256", "not-a-sha256")
+
+	_, err = Load()
+	if err == nil {
+		t.Fatal("expected invalid usage auth hash error")
+	}
+}
