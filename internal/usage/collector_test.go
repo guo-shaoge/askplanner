@@ -105,6 +105,34 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("append second question event: %v", err)
 	}
+	if err := store.Append(QuestionEvent{
+		EventID:          "live-3",
+		AskedAt:          time.Date(2026, 3, 24, 9, 57, 0, 0, time.UTC),
+		Source:           sourceLark,
+		UserKey:          "u2",
+		ConversationKey:  "lark:chat:def:user:u2",
+		Question:         "show ddl jobs",
+		Status:           statusSuccess,
+		DurationMs:       1200,
+		Model:            "gpt-5.3-codex",
+		WorkspaceEnvHash: "env2",
+	}); err != nil {
+		t.Fatalf("append third question event: %v", err)
+	}
+	if err := store.Append(QuestionEvent{
+		EventID:          "live-4",
+		AskedAt:          time.Date(2026, 3, 24, 9, 56, 0, 0, time.UTC),
+		Source:           sourceLark,
+		UserKey:          "u3",
+		ConversationKey:  "lark:chat:ghi:user:u3",
+		Question:         "why plan changed",
+		Status:           statusSuccess,
+		DurationMs:       1400,
+		Model:            "gpt-5.3-codex",
+		WorkspaceEnvHash: "env3",
+	}); err != nil {
+		t.Fatalf("append fourth question event: %v", err)
+	}
 
 	now := time.Date(2026, 3, 24, 18, 0, 0, 0, time.Local)
 	collector := &Collector{
@@ -115,8 +143,9 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 		logTailBytes:     1 << 20,
 		questionStore:    store,
 		userResolver: stubUsageUserResolver{
-			userLookupKey(sourceCLI, cliVirtualUserKey, ""):          usageCLIUserName,
-			userLookupKey(sourceLark, "u1", "lark:chat:abc:user:u1"): "Alice Zhang",
+			userLookupKey(sourceCLI, cliVirtualUserKey, "cli:default"): usageCLIUserName,
+			userLookupKey(sourceLark, "u1", "lark:chat:abc:user:u1"):   "Alice Zhang",
+			userLookupKey(sourceLark, "u2", "lark:chat:def:user:u2"):   "Alice Zhang",
 		},
 		now: func() time.Time { return now },
 	}
@@ -129,11 +158,14 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 	if snapshot.Summary.TotalConversations != 2 {
 		t.Fatalf("total conversations = %d, want 2", snapshot.Summary.TotalConversations)
 	}
-	if snapshot.Summary.TotalUsers != 2 {
-		t.Fatalf("total users = %d, want 2", snapshot.Summary.TotalUsers)
+	if snapshot.Summary.TotalUsers != 4 {
+		t.Fatalf("total users = %d, want 4", snapshot.Summary.TotalUsers)
 	}
-	if snapshot.Summary.TotalQuestions != 2 {
-		t.Fatalf("total questions = %d, want 2", snapshot.Summary.TotalQuestions)
+	if snapshot.Summary.TotalQuestions != 4 {
+		t.Fatalf("total questions = %d, want 4", snapshot.Summary.TotalQuestions)
+	}
+	if snapshot.Summary.TotalUsersByName != 2 {
+		t.Fatalf("total users by name = %d, want 2", snapshot.Summary.TotalUsersByName)
 	}
 	if len(snapshot.TopUsers) == 0 || snapshot.TopUsers[0].UserKey != "u1" {
 		t.Fatalf("top users = %+v, want u1 first", snapshot.TopUsers)
@@ -175,22 +207,50 @@ func TestCollectorSnapshotAndPages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("questions page by name: %v", err)
 	}
-	if pageByName.TotalItems != 1 {
-		t.Fatalf("questions by name total items = %d, want 1", pageByName.TotalItems)
+	if pageByName.TotalItems != 2 {
+		t.Fatalf("questions by name total items = %d, want 2", pageByName.TotalItems)
 	}
 
 	users, err := collector.UsersPage(UserQuery{Page: 1, PageSize: 10})
 	if err != nil {
 		t.Fatalf("users page: %v", err)
 	}
-	if users.TotalItems != 2 {
-		t.Fatalf("users total items = %d, want 2", users.TotalItems)
+	if users.TotalItems != 4 {
+		t.Fatalf("users total items = %d, want 4", users.TotalItems)
 	}
 	if users.Items[0].UserKey != "u1" || users.Items[0].QuestionCount != 1 {
 		t.Fatalf("first user = %+v, want u1 count 1", users.Items[0])
 	}
 	if users.Items[0].UserName != "Alice Zhang" {
 		t.Fatalf("first user name = %q, want Alice Zhang", users.Items[0].UserName)
+	}
+
+	namedUsers, err := collector.NamedUsersPage(NamedUserQuery{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("named users page: %v", err)
+	}
+	if namedUsers.TotalItems != 3 {
+		t.Fatalf("named users total items = %d, want 3", namedUsers.TotalItems)
+	}
+	if namedUsers.Items[0].UserName != "Alice Zhang" || namedUsers.Items[0].QuestionCount != 2 {
+		t.Fatalf("first named user = %+v, want Alice Zhang count 2", namedUsers.Items[0])
+	}
+	if namedUsers.Items[0].AccountCount != 2 {
+		t.Fatalf("first named user account count = %d, want 2", namedUsers.Items[0].AccountCount)
+	}
+	if len(namedUsers.Items[0].Accounts) != 2 || namedUsers.Items[0].Accounts[0] != "lark:u1" || namedUsers.Items[0].Accounts[1] != "lark:u2" {
+		t.Fatalf("first named user accounts = %+v, want [lark:u1 lark:u2]", namedUsers.Items[0].Accounts)
+	}
+	if namedUsers.Items[2].UserName != "u3" || namedUsers.Items[2].NameResolved {
+		t.Fatalf("unresolved named user = %+v, want fallback raw user key", namedUsers.Items[2])
+	}
+
+	namedUsersByQuery, err := collector.NamedUsersPage(NamedUserQuery{Page: 1, PageSize: 10, Query: "u3"})
+	if err != nil {
+		t.Fatalf("named users page by query: %v", err)
+	}
+	if namedUsersByQuery.TotalItems != 1 || namedUsersByQuery.Items[0].UserName != "u3" {
+		t.Fatalf("named users by query = %+v, want unresolved u3 only", namedUsersByQuery.Items)
 	}
 }
 

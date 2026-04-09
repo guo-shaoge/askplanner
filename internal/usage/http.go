@@ -9,9 +9,10 @@ import (
 )
 
 type Server struct {
-	collector *Collector
-	indexPage *template.Template
-	listPage  *template.Template
+	collector      *Collector
+	indexPage      *template.Template
+	questionsPage  *template.Template
+	namedUsersPage *template.Template
 }
 
 func NewServer(collector *Collector) (*Server, error) {
@@ -19,14 +20,19 @@ func NewServer(collector *Collector) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse dashboard template: %w", err)
 	}
-	listPage, err := template.New("usage_questions").Parse(questionsHTML)
+	questionsPage, err := template.New("usage_questions").Parse(questionsHTML)
 	if err != nil {
 		return nil, fmt.Errorf("parse questions template: %w", err)
 	}
+	namedUsersPage, err := template.New("usage_named_users").Parse(namedUsersHTML)
+	if err != nil {
+		return nil, fmt.Errorf("parse named users template: %w", err)
+	}
 	return &Server{
-		collector: collector,
-		indexPage: indexPage,
-		listPage:  listPage,
+		collector:      collector,
+		indexPage:      indexPage,
+		questionsPage:  questionsPage,
+		namedUsersPage: namedUsersPage,
 	}, nil
 }
 
@@ -34,9 +40,11 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/questions", s.handleQuestionsPage)
+	mux.HandleFunc("/users-by-name", s.handleNamedUsersPage)
 	mux.HandleFunc("/api/usage", s.handleUsage)
 	mux.HandleFunc("/api/questions", s.handleQuestions)
 	mux.HandleFunc("/api/users", s.handleUsers)
+	mux.HandleFunc("/api/users-by-name", s.handleNamedUsers)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	return mux
 }
@@ -56,7 +64,16 @@ func (s *Server) handleQuestionsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = s.listPage.Execute(w, nil)
+	_ = s.questionsPage.Execute(w, nil)
+}
+
+func (s *Server) handleNamedUsersPage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/users-by-name" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = s.namedUsersPage.Execute(w, nil)
 }
 
 func (s *Server) handleUsage(w http.ResponseWriter, _ *http.Request) {
@@ -91,6 +108,19 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 	page, err := s.collector.UsersPage(UserQuery{
 		Page:     parseIntQuery(r.URL.Query().Get("page"), 1),
 		PageSize: parseIntQuery(r.URL.Query().Get("page_size"), 50),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, page)
+}
+
+func (s *Server) handleNamedUsers(w http.ResponseWriter, r *http.Request) {
+	page, err := s.collector.NamedUsersPage(NamedUserQuery{
+		Page:     parseIntQuery(r.URL.Query().Get("page"), 1),
+		PageSize: parseIntQuery(r.URL.Query().Get("page_size"), 50),
+		Query:    strings.TrimSpace(r.URL.Query().Get("q")),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -233,6 +263,13 @@ const sharedScript = `
       if (!href) return body;
       return '<a href="' + escapeHTML(href) + '">' + body + '</a>';
     }
+    function renderInlineList(items, emptyText, limit) {
+      if (!items || !items.length) return escapeHTML(emptyText || '-');
+      var cap = typeof limit === 'number' && limit > 0 ? limit : items.length;
+      var shown = items.slice(0, cap).map(function(item) { return escapeHTML(item); });
+      if (items.length > cap) shown.push('+' + (items.length - cap) + ' more');
+      return shown.join('<br>');
+    }
     function renderBreakdown(el, items) {
       if (!items || !items.length) {
         el.innerHTML = '<div class="empty">No data yet.</div>';
@@ -282,7 +319,10 @@ const indexHTML = `<!doctype html>
           <div class="kicker">Operations view</div>
           <h1>askplanner live usage</h1>
         </div>
-        <a class="nav-link" href="/questions">Open question details</a>
+        <div class="actions">
+          <a class="nav-link" href="/users-by-name">Open named users</a>
+          <a class="nav-link" href="/questions">Open question details</a>
+        </div>
       </div>
       <p class="subhead">Snapshot metrics come from the session store and workspace metadata. Cumulative user and question metrics come from the append-only question event store.</p>
       <div class="meta">
@@ -312,9 +352,9 @@ const indexHTML = `<!doctype html>
       <div class="panel split-4"><div class="panel-inner"><h2>Session source</h2><div id="sourceBreakdown" class="list"></div></div></div>
       <div class="panel split-4"><div class="panel-inner"><h2>Question status</h2><div id="questionStatusBreakdown" class="list"></div></div></div>
       <div class="panel split-4"><div class="panel-inner"><h2>Model override</h2><div id="modelBreakdown" class="list"></div></div></div>
-      <div class="panel split-6"><div class="panel-inner"><h2>Top users</h2><div id="topUsers"></div></div></div>
+      <div class="panel split-6"><div class="panel-inner"><div class="panel-head"><h2>Top accounts</h2><a class="nav-link" href="/users-by-name">Named users view</a></div><div id="topUsers"></div></div></div>
       <div class="panel split-6"><div class="panel-inner"><h2>Workspace refs</h2><div id="repoBreakdown" class="list"></div></div></div>
-      <div class="panel split-12"><div class="panel-inner"><div class="panel-head"><h2>Users overview</h2><div class="panel-note">Shows cumulative and recent per-user question counts.</div></div><div id="usersTable"></div></div></div>
+      <div class="panel split-12"><div class="panel-inner"><div class="panel-head"><h2>Accounts overview</h2><div class="panel-note">Per-account counts. Use the named users page to merge multiple accounts that resolve to the same real person.</div></div><div id="usersTable"></div></div></div>
       <div class="panel split-12"><div class="panel-inner"><h2>Recent sessions</h2><div id="recentSessions"></div></div></div>
       <div class="panel split-6"><div class="panel-inner"><h2>Recent requests</h2><div id="recentRequests"></div></div></div>
       <div class="panel split-6"><div class="panel-inner"><h2>Recent errors</h2><div id="recentErrors"></div></div></div>
@@ -473,7 +513,10 @@ const questionsHTML = `<!doctype html>
           <div class="kicker">Question details</div>
           <h1>Question detail view</h1>
         </div>
-        <a class="nav-link" href="/">Back to dashboard</a>
+        <div class="actions">
+          <a class="nav-link" href="/users-by-name">Named users</a>
+          <a class="nav-link" href="/">Back to dashboard</a>
+        </div>
       </div>
       <p class="subhead">Detailed paginated question view from the append-only question event store. Filters are encoded in the URL so the view is shareable and refresh-safe.</p>
       <div class="meta">
@@ -576,6 +619,143 @@ const questionsHTML = `<!doctype html>
     document.getElementById('applyBtn').addEventListener('click', function() { applyQuery(1); });
     document.getElementById('resetBtn').addEventListener('click', function() {
       history.replaceState(null, '', '/questions');
+      document.getElementById('filters').reset();
+      load();
+    });
+    document.getElementById('prevBtn').addEventListener('click', function() {
+      if (currentPage > 1) applyQuery(currentPage - 1);
+    });
+    document.getElementById('nextBtn').addEventListener('click', function() {
+      if (!currentTotalPages || currentPage >= currentTotalPages) return;
+      applyQuery(currentPage + 1);
+    });
+    window.addEventListener('popstate', load);
+    load().catch(function(err) {
+      document.getElementById('resultsMeta').textContent = 'load failed: ' + err.message;
+    });
+  </script>
+</body>
+</html>`
+
+const namedUsersHTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>askplanner named users</title>
+  <style>` + sharedStyle + `</style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="hero-top">
+        <div>
+          <div class="kicker">People view</div>
+          <h1>Users by real name</h1>
+        </div>
+        <div class="actions">
+          <a class="nav-link" href="/questions">Question details</a>
+          <a class="nav-link" href="/">Back to dashboard</a>
+        </div>
+      </div>
+      <p class="subhead">This view merges multiple accounts when they resolve to the same real name. If a name cannot be resolved yet, the raw account id is shown as a fallback so the list still covers every user.</p>
+      <div class="meta">
+        <div id="pageMeta">loading...</div>
+      </div>
+    </section>
+    <section class="grid">
+      <div class="panel split-12">
+        <div class="panel-inner">
+          <div class="panel-head"><h2>Filters</h2><div class="panel-note">Search by real name, account id, source, or recent question.</div></div>
+          <form id="filters" class="filters">
+            <div class="field"><label>Search</label><input name="q" placeholder="Alice / lark:u1 / recent question"></div>
+          </form>
+          <div class="actions" style="margin-top:14px">
+            <button id="applyBtn" class="button button-primary" type="button">Apply filters</button>
+            <button id="resetBtn" class="button" type="button">Reset</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel split-12">
+        <div class="panel-inner">
+          <div class="panel-head"><h2>Named users</h2><div id="resultsMeta" class="panel-note">loading...</div></div>
+          <div id="namedUsersTable"></div>
+          <div class="pagination">
+            <div class="panel-note" id="pageInfo"></div>
+            <div class="actions">
+              <button id="prevBtn" class="button" type="button">Previous</button>
+              <button id="nextBtn" class="button" type="button">Next</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script>` + sharedScript + `
+    var currentPage = 1;
+    var currentTotalPages = 0;
+    function currentQuery() {
+      return new URLSearchParams(window.location.search);
+    }
+    function syncForm() {
+      var params = currentQuery();
+      var form = document.getElementById('filters');
+      ['q'].forEach(function(key) {
+        if (form.elements[key]) {
+          form.elements[key].value = params.get(key) || '';
+        }
+      });
+    }
+    function buildQuery(page) {
+      var form = document.getElementById('filters');
+      var params = new URLSearchParams();
+      var q = (form.elements.q && form.elements.q.value || '').trim();
+      if (q) params.set('q', q);
+      params.set('page', String(page || 1));
+      params.set('page_size', '50');
+      return params;
+    }
+    function applyQuery(page) {
+      var params = buildQuery(page);
+      history.replaceState(null, '', '/users-by-name?' + params.toString());
+      load();
+    }
+    async function load() {
+      syncForm();
+      var params = currentQuery();
+      if (!params.get('page')) {
+        params.set('page', '1');
+      }
+      params.set('page_size', '50');
+      var res = await fetch('/api/users-by-name?' + params.toString(), { cache: 'no-store' });
+      if (!res.ok) throw new Error(await res.text());
+      var data = await res.json();
+      currentPage = data.page || 1;
+      currentTotalPages = data.total_pages || 0;
+      document.getElementById('pageMeta').textContent = 'page ' + currentPage + ' / ' + (currentTotalPages || 1);
+      document.getElementById('resultsMeta').textContent = escapeHTML(String(data.total_items || 0)) + ' grouped users';
+      document.getElementById('pageInfo').textContent = 'Page ' + currentPage + ' of ' + (currentTotalPages || 1);
+      document.getElementById('prevBtn').disabled = currentPage <= 1;
+      document.getElementById('nextBtn').disabled = currentTotalPages === 0 || currentPage >= currentTotalPages;
+      renderTable(document.getElementById('namedUsersTable'), [
+        { label: 'Name', render: function(row) {
+            var badge = row.name_resolved ? '<span class="pill pill-teal">resolved</span>' : '<span class="pill">fallback</span>';
+            return '<div style="display:grid;gap:8px"><strong>' + escapeHTML(row.user_name || '-') + '</strong>' + badge + '</div>';
+          } },
+        { label: 'Accounts', render: function(row) {
+            return '<div style="display:grid;gap:6px"><span>' + escapeHTML(fmtNumber(row.account_count)) + '</span><span class="mono">' + renderInlineList(row.accounts || [], '-', 4) + '</span></div>';
+          } },
+        { label: 'Sources', render: function(row) { return '<span class="mono">' + renderInlineList(row.sources || [], '-', 3) + '</span>'; } },
+        { label: 'Questions', render: function(row) { return escapeHTML(fmtNumber(row.question_count)); } },
+        { label: '24h', render: function(row) { return escapeHTML(fmtNumber(row.question_count_24h)); } },
+        { label: '7d', render: function(row) { return escapeHTML(fmtNumber(row.question_count_7d)); } },
+        { label: 'Last Asked', render: function(row) { return escapeHTML(fmtTime(row.last_asked_at)); } },
+        { label: 'Recent Question', render: function(row) { return escapeHTML(row.recent_question || '-'); } }
+      ], data.items || [], 'No users match the current filters.');
+    }
+    document.getElementById('applyBtn').addEventListener('click', function() { applyQuery(1); });
+    document.getElementById('resetBtn').addEventListener('click', function() {
+      history.replaceState(null, '', '/users-by-name');
       document.getElementById('filters').reset();
       load();
     });

@@ -103,8 +103,8 @@ func TestFeishuUserNameResolverResolveAndCache(t *testing.T) {
 	if got := resolver.Resolve(context.Background(), sourceLark, "larkbot:bot-a:u_123", ""); got != "Bob" {
 		t.Fatalf("resolved fallback name = %q, want Bob", got)
 	}
-	if len(fakeA.calls) != 3 {
-		t.Fatalf("fallback lookup calls = %+v, want 3 total calls", fakeA.calls)
+	if len(fakeA.calls) != 2 {
+		t.Fatalf("fallback lookup calls = %+v, want 2 total calls", fakeA.calls)
 	}
 
 	if got := resolver.Resolve(context.Background(), sourceLark, "ou_999", "lark:chat:oc_1:user:ou_999"); got != "Carol" {
