@@ -658,7 +658,7 @@ const namedUsersHTML = `<!doctype html>
           <a class="nav-link" href="/">Back to dashboard</a>
         </div>
       </div>
-      <p class="subhead">This view merges multiple accounts when they resolve to the same real name. For each grouped user, the table shows lifetime total questions together with recent 24h and 7d activity. If a name cannot be resolved yet, the raw account id is shown as a fallback so the list still covers every user.</p>
+      <p class="subhead">This view merges multiple accounts when they resolve to the same real name. For each grouped user, the table shows the lifetime total number of questions since their first recorded day. If a name cannot be resolved yet, the raw account id is shown as a fallback so the list still covers every user.</p>
       <div class="meta">
         <div id="pageMeta">loading...</div>
       </div>
@@ -748,8 +748,6 @@ const namedUsersHTML = `<!doctype html>
           } },
         { label: 'Sources', render: function(row) { return '<span class="mono">' + renderInlineList(row.sources || [], '-', 3) + '</span>'; } },
         { label: 'Total Questions', render: function(row) { return escapeHTML(fmtNumber(row.question_count)); } },
-        { label: '24h', render: function(row) { return escapeHTML(fmtNumber(row.question_count_24h)); } },
-        { label: '7d', render: function(row) { return escapeHTML(fmtNumber(row.question_count_7d)); } },
         { label: 'Last Asked', render: function(row) { return escapeHTML(fmtTime(row.last_asked_at)); } },
         { label: 'Recent Question', render: function(row) { return escapeHTML(row.recent_question || '-'); } }
       ], data.items || [], 'No users match the current filters.');
