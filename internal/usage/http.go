@@ -6,6 +6,8 @@ import (
 	"html/template"
 	"net/http"
 	"strings"
+
+	"lab/askplanner/internal/config"
 )
 
 type Server struct {
@@ -13,9 +15,10 @@ type Server struct {
 	indexPage      *template.Template
 	questionsPage  *template.Template
 	namedUsersPage *template.Template
+	accessControl  *usageAccessControl
 }
 
-func NewServer(collector *Collector) (*Server, error) {
+func NewServer(collector *Collector, cfg *config.Config) (*Server, error) {
 	indexPage, err := template.New("usage_index").Parse(indexHTML)
 	if err != nil {
 		return nil, fmt.Errorf("parse dashboard template: %w", err)
@@ -28,11 +31,16 @@ func NewServer(collector *Collector) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse named users template: %w", err)
 	}
+	accessControl, err := newUsageAccessControl(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("build usage access control: %w", err)
+	}
 	return &Server{
 		collector:      collector,
 		indexPage:      indexPage,
 		questionsPage:  questionsPage,
 		namedUsersPage: namedUsersPage,
+		accessControl:  accessControl,
 	}, nil
 }
 
@@ -46,6 +54,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/users", s.handleUsers)
 	mux.HandleFunc("/api/users-by-name", s.handleNamedUsers)
 	mux.HandleFunc("/healthz", s.handleHealth)
+	if s.accessControl != nil {
+		return s.accessControl.Wrap(mux)
+	}
 	return mux
 }
 

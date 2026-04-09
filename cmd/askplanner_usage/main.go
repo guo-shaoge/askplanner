@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"lab/askplanner/internal/config"
 	"lab/askplanner/internal/usage"
@@ -29,7 +30,7 @@ func main() {
 	if err != nil {
 		fatalStartup("build usage collector", err)
 	}
-	server, err := usage.NewServer(collector)
+	server, err := usage.NewServer(collector, cfg)
 	if err != nil {
 		fatalStartup("build usage dashboard", err)
 	}
@@ -39,7 +40,16 @@ func main() {
 		addr = "127.0.0.1:18080"
 	}
 	log.Printf("[usage] dashboard listening on http://%s", addr)
-	if err := http.ListenAndServe(addr, server.Handler()); err != nil {
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           server.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    8 << 10,
+	}
+	if err := httpServer.ListenAndServe(); err != nil {
 		fatalStartup("start usage dashboard", err, "Check USAGE_HTTP_ADDR and whether the port is already in use.")
 	}
 }
