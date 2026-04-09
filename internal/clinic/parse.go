@@ -1,6 +1,7 @@
 package clinic
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/url"
@@ -17,15 +18,16 @@ var (
 )
 
 type LinkSpec struct {
-	RawURL     string
-	ClusterID  string
-	StartTime  time.Time
-	EndTime    time.Time
-	Digest     string
-	Database   string
-	Instance   string
-	IsDetail   bool
-	AnchorTime time.Time
+	RawURL            string
+	ClusterID         string
+	StartTime         time.Time
+	EndTime           time.Time
+	Digest            string
+	Database          string
+	Instance          string
+	IsDetail          bool
+	IsStatementDetail bool
+	AnchorTime        time.Time
 }
 
 func ParseSlowQueryLink(text string) (*LinkSpec, bool, error) {
@@ -50,21 +52,25 @@ func parseSlowQueryURL(raw string) (*LinkSpec, bool, error) {
 
 	fragmentRoute, fragmentValues := parseFragment(u.Fragment)
 	routeText := strings.ToLower(strings.Join([]string{u.Path, fragmentRoute}, " "))
-	if !isSlowQueryRoute(routeText) {
+	if !isSupportedClinicSQLRoute(routeText) {
 		return nil, false, nil
 	}
 
 	values := url.Values{}
 	copyValues(values, u.Query())
 	copyValues(values, fragmentValues)
+	if err := expandStatementDetailValues(values, routeText); err != nil {
+		return nil, true, err
+	}
 
 	spec := &LinkSpec{
-		RawURL:    raw,
-		ClusterID: firstValue(values, "clusterId", "clusterID", "cluster_id"),
-		Digest:    firstValue(values, "digest", "sqlDigest", "sql_digest", "queryDigest"),
-		Database:  firstValue(values, "db", "database", "schema", "schema_name"),
-		Instance:  firstValue(values, "instance", "tidbAddr", "tidb_addr", "address", "node"),
-		IsDetail:  isSlowQueryDetailRoute(routeText),
+		RawURL:            raw,
+		ClusterID:         firstValue(values, "clusterId", "clusterID", "cluster_id"),
+		Digest:            firstValue(values, "digest", "sqlDigest", "sql_digest", "queryDigest"),
+		Database:          firstValue(values, "db", "database", "schema", "schema_name"),
+		Instance:          firstValue(values, "instance", "tidbAddr", "tidb_addr", "address", "node"),
+		IsDetail:          isClinicDetailRoute(routeText),
+		IsStatementDetail: isStatementDetailRoute(routeText),
 	}
 
 	start, end, hasExplicitRange, err := parseTimeRange(values)
@@ -146,13 +152,26 @@ func isSlowQueryRoute(route string) bool {
 	return strings.Contains(normalized, "slowquery")
 }
 
+func isStatementDetailRoute(route string) bool {
+	normalized := strings.NewReplacer("_", "", "-", "", "/", "", " ", "").Replace(strings.ToLower(route))
+	return strings.Contains(normalized, "statementdetail")
+}
+
+func isSupportedClinicSQLRoute(route string) bool {
+	return isSlowQueryRoute(route) || isStatementDetailRoute(route)
+}
+
+func isClinicDetailRoute(route string) bool {
+	return isSlowQueryDetailRoute(route) || isStatementDetailRoute(route)
+}
+
 func isSlowQueryDetailRoute(route string) bool {
 	return isSlowQueryRoute(route) && strings.Contains(strings.ToLower(route), "detail")
 }
 
 func parseTimeRange(values url.Values) (time.Time, time.Time, bool, error) {
-	startRaw := firstValue(values, "startTime", "start", "from", "start_at", "startAt", "start_ts", "start_time")
-	endRaw := firstValue(values, "endTime", "end", "to", "end_at", "endAt", "end_ts", "end_time")
+	startRaw := firstValue(values, "startTime", "start", "from", "start_at", "startAt", "start_ts", "start_time", "beginTime", "begin_time", "begin")
+	endRaw := firstValue(values, "endTime", "end", "to", "end_at", "endAt", "end_ts", "end_time", "finishTime", "finish_time", "finish", "endTimeSec", "end_time_sec", "endTimeUnix", "end_time_unix", "endTimeStamp", "end_timestamp")
 	if startRaw == "" && endRaw == "" {
 		return time.Time{}, time.Time{}, false, nil
 	}
@@ -231,6 +250,61 @@ func parseDetailTimestamp(value string) (time.Time, error) {
 	}
 	whole, fractional := math.Modf(seconds)
 	return time.Unix(int64(whole), int64(fractional*float64(time.Second))).UTC(), nil
+}
+
+func expandStatementDetailValues(values url.Values, route string) error {
+	if !isStatementDetailRoute(route) {
+		return nil
+	}
+
+	payload := firstValue(values, "query")
+	if strings.TrimSpace(payload) == "" {
+		return nil
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		return fmt.Errorf("parse Clinic statement detail query payload: %w", err)
+	}
+	for key, raw := range decoded {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		if hasValueCaseInsensitive(values, key) {
+			continue
+		}
+		if text := stringifyJSONValue(raw); text != "" {
+			values.Set(key, text)
+		}
+	}
+	return nil
+}
+
+func hasValueCaseInsensitive(values url.Values, key string) bool {
+	for existing, vals := range values {
+		if !strings.EqualFold(existing, key) || len(vals) == 0 {
+			continue
+		}
+		if strings.TrimSpace(vals[0]) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func stringifyJSONValue(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(v)
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", v))
+	}
 }
 
 func parseFlexibleTime(value string) (time.Time, error) {

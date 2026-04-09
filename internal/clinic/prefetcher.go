@@ -138,6 +138,19 @@ func (p *Prefetcher) Enrich(ctx context.Context, userKey, question string, runti
 		log.Printf("[clinic] prefetch failed for cluster_id=%s url=%s: %v", spec.ClusterID, spec.RawURL, err)
 		return EnrichResult{RuntimeContext: runtime}, classifyClinicFetchError(err)
 	}
+	if spec.IsStatementDetail && analysis.NoRows {
+		log.Printf("[clinic] statement detail prefetch returned no slow-query rows: cluster_id=%s digest=%s db=%s start=%s end=%s",
+			spec.ClusterID,
+			spec.Digest,
+			spec.Database,
+			spec.StartTime.UTC().Format(time.RFC3339),
+			spec.EndTime.UTC().Format(time.RFC3339),
+		)
+		return EnrichResult{RuntimeContext: runtime}, usererr.New(
+			usererr.KindUnavailable,
+			"Agent recognized this Clinic Statement Detail link, but the relay could not map it to any slow-query samples. This page likely uses statement-summary data that the current relay cannot prefetch yet. Please send the SQL text, `EXPLAIN ANALYZE`, or a Clinic slow-query link instead.",
+		)
+	}
 	log.Printf("[clinic] prefetch succeeded: cluster_id=%s total_queries=%d unique_digests=%d top_digests=%d",
 		analysis.ClusterID,
 		analysis.Summary.TotalQueries,
